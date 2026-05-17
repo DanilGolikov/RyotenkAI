@@ -18,7 +18,15 @@ from ryotenkai_shared.errors import (
 if TYPE_CHECKING:
     from ryotenkai_shared.pipeline_context import RunContext
 
-SCHEMA_VERSION = 1
+#: Pipeline state schema version. Bumped to 2 in Phase H2 (2026-05-17)
+#: when ``AttemptFailure`` joined ``PipelineAttemptState``. Older state
+#: files (schema_version=1) load with auto-migration via
+#: :meth:`AttemptFailure.from_legacy_error_string`; on the next save
+#: they're rewritten as schema_version=2.
+SCHEMA_VERSION = 2
+#: All schema versions this loader can read. Forward-incompatible
+#: bumps (schema_version > SCHEMA_VERSION) are still rejected.
+_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
 
 
 class PipelineStateError(RuntimeError):
@@ -154,10 +162,16 @@ class PipelineStateStore:
         if not isinstance(raw, dict):
             raise PipelineStateLoadError(f"Invalid pipeline state shape: {self.state_path}")
         state = PipelineState.from_dict(raw)
-        if state.schema_version != SCHEMA_VERSION:
+        if state.schema_version not in _SUPPORTED_SCHEMA_VERSIONS:
             raise PipelineStateLoadError(
                 f"Unsupported pipeline_state schema_version={state.schema_version}; expected {SCHEMA_VERSION}"
             )
+        # Phase H2 — bump the in-memory schema_version so subsequent
+        # saves emit the latest version. The legacy ``error: str``
+        # back-fill into ``failure`` is already applied by
+        # :meth:`PipelineAttemptState.from_dict`.
+        if state.schema_version < SCHEMA_VERSION:
+            state.schema_version = SCHEMA_VERSION
         if not state.logical_run_id:
             raise PipelineStateLoadError(f"Corrupt pipeline state: missing logical_run_id in {self.state_path}")
         if not state.run_directory:

@@ -82,6 +82,7 @@ from ryotenkai_control.pipeline.constants import (
 )
 from ryotenkai_control.pipeline.stages import StageNames
 from ryotenkai_control.pipeline.state import PipelineStateError, StageRunState
+from ryotenkai_control.pipeline.state.models import AttemptFailure
 from ryotenkai_shared.contracts.pipeline_conditions import ConditionStatus
 from ryotenkai_shared.errors import (
     InternalError,
@@ -109,6 +110,22 @@ _STATUS_FAILED = "failed"
 
 def _noop(*_args: Any, **_kwargs: Any) -> None:
     """Default for optional hooks — guarantees the loop never calls ``None()``."""
+
+
+def _current_request_id_or_none() -> str | None:
+    """Phase H2 — best-effort request_id lookup for ``AttemptFailure``.
+
+    Imported lazily so the loop module doesn't pull in
+    ``ryotenkai_shared.api`` unconditionally (the API surface depends on
+    FastAPI/Starlette which is not always loaded — e.g. ``ryotenkai
+    runs ls`` doesn't need it).
+    """
+    try:
+        from ryotenkai_shared.api.request_id import current_request_id
+
+        return current_request_id()
+    except Exception:  # noqa: BLE001 — defensive
+        return None
 
 
 def _stamp_attempt_context(
@@ -258,6 +275,19 @@ class StageExecutionLoop:
                             "prereq_failure": True,
                         },
                     )
+                    # Phase H2 — typed AttemptFailure for the prereq path.
+                    try:
+                        self._attempt_controller.record_failure(
+                            AttemptFailure.from_exception(
+                                prereq_exc,
+                                stage_name=stage_name,
+                                stage_idx=i,
+                                stage_total=len(self._stages),
+                                request_id=_current_request_id_or_none(),
+                            )
+                        )
+                    except Exception:  # noqa: BLE001 — defensive
+                        pass
                     self._attempt_controller.finalize(status=StageRunState.STATUS_FAILED)
                     raise prereq_exc
 
@@ -524,6 +554,22 @@ class StageExecutionLoop:
             reason="StageFailed",
             message=f"{error_code}: {error_message}",
         )
+        # Phase H2 — persist a typed AttemptFailure on the attempt
+        # BEFORE finalize so resume tooling / web UI can read the
+        # structured failure record from pipeline_state.json. Best-
+        # effort: any persistence hiccup must not mask the original
+        # exception path.
+        try:
+            failure = AttemptFailure.from_exception(
+                stage_exc,
+                stage_name=stage_name,
+                stage_idx=stage_idx,
+                stage_total=len(self._stages),
+                request_id=_current_request_id_or_none(),
+            )
+            self._attempt_controller.record_failure(failure)
+        except Exception:  # noqa: BLE001 — defensive persistence
+            pass
         self._attempt_controller.finalize(status=StageRunState.STATUS_FAILED)
 
     def _handle_stage_success(
@@ -686,6 +732,22 @@ class StageExecutionLoop:
         completed_at = utc_now_iso()
         if self._attempt_controller.has_active_attempt:
             self._attempt_controller.mark_attempt_completed_at(completed_at=completed_at)
+            # Phase H2 — typed AttemptFailure for the unexpected-error
+            # path. Synthesise an InternalError-like record so the
+            # consumer sees a stable ``code="INTERNAL_ERROR"``.
+            try:
+                self._attempt_controller.record_failure(
+                    AttemptFailure(
+                        code="INTERNAL_ERROR",
+                        title="Internal error",
+                        detail=f"Unexpected error: {e!s}",
+                        context={"exception_type": type(e).__name__},
+                        failed_at=completed_at,
+                        request_id=_current_request_id_or_none(),
+                    )
+                )
+            except Exception:  # noqa: BLE001 — defensive
+                pass
         if self._attempt_controller.has_state:
             self._attempt_controller.finalize(
                 status=StageRunState.STATUS_FAILED,
