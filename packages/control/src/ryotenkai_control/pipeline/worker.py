@@ -25,12 +25,20 @@ exceptions render a short ``error: internal error`` line plus a
 ``trace=`` correlation id and a hint to check server logs — full
 traceback only goes to the log file, never to the user terminal.
 
-Phase H1 (Error Persistence, 2026-05-17)
----------------------------------------
-``_log_pipeline_outcome`` writes a kubectl/Terraform-style summary
-block to ``pipeline.log`` as the LAST entry of every run (success or
-failure). ``tail pipeline.log`` shows outcome immediately without
-scrolling 1000 lines.
+Phase H (Error Persistence, 2026-05-17)
+--------------------------------------
+Three additive hooks for postmortem / CI / UI:
+
+* ``_log_pipeline_outcome`` writes a kubectl/Terraform-style summary
+  block to ``pipeline.log`` as the LAST entry of every run (success or
+  failure). ``tail pipeline.log`` shows outcome immediately.
+* The worker exception handlers now also write to
+  ``<runs_base>/init_error.log`` when the failure happens BEFORE
+  ``pipeline.log`` was attached (startup-time: missing secrets, bad
+  config, etc.) — see :func:`_write_init_error`.
+* When the exception is a :class:`RyotenkAIError` and the orchestrator
+  has materialised a state file, the typed failure is also persisted
+  to ``pipeline_state.json`` via the H2 ``AttemptFailure`` dataclass.
 """
 
 from __future__ import annotations
@@ -39,11 +47,14 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import time
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ryotenkai_shared.config.runtime import RuntimeSettings
     from ryotenkai_shared.errors import RyotenkAIError
 
 
@@ -165,9 +176,10 @@ def _log_pipeline_outcome(
     Uses the ryotenkai logger so the block flows through the file
     handler attached by :func:`init_run_logging`. When no file handler
     is attached (startup-time failure, very early in main()) the block
-    is only emitted to stderr.
+    is also emitted — but it only reaches stderr; the H3 init_error.log
+    writer is the persistence path for that case.
 
-    Always emits at ``error`` level for failure (red in coloured TTYs)
+    Always emits an ``error`` level for failure (red in coloured TTYs)
     and ``info`` for success. The choice survives the file handler too:
     pipeline.log records the level prefix for grep filtering.
     """
@@ -199,12 +211,11 @@ def _extract_attempt_fields(
 ) -> dict[str, Any]:
     """Pull H1-stamped attempt context off a :class:`RyotenkAIError`.
 
-    The execution loop calls
-    :func:`ryotenkai_control.pipeline.execution.stage_execution_loop._stamp_attempt_context`
-    before re-raising, so the keys ``stage_name`` / ``stage_idx`` /
-    ``stage_total`` / ``attempt_no`` are populated for stage failures.
-    Pre-stage failures (launch rejection, bootstrap errors) won't have
-    them ⇒ the dict is empty and the outcome block omits those lines.
+    The execution loop calls :func:`_stamp_attempt_context` before
+    re-raising, so the keys ``stage_name`` / ``stage_idx`` / ``stage_total``
+    / ``attempt_no`` are populated for stage failures. Pre-stage
+    failures (launch rejection, bootstrap errors) won't have them ⇒
+    the dict is empty and the outcome block omits those lines.
     """
     if exc is None:
         return {}
@@ -216,6 +227,111 @@ def _extract_attempt_fields(
         if key in ctx and ctx[key] is not None:
             out[key] = ctx[key]
     return out
+
+
+def _pipeline_log_attached() -> bool:
+    """True iff :func:`init_run_logging` has attached the aggregated handler.
+
+    Phase H3 — Detect "the worker reached the orchestrator and the
+    attempt directory exists" so the exception handler can decide
+    whether to also write the init_error.log fallback.
+    """
+    # Import the MODULE (not the ``logger`` object) so we can read the
+    # private ``_pipeline_file_handler`` module-level singleton.
+    import ryotenkai_shared.utils.logger as logger_module
+
+    return getattr(logger_module, "_pipeline_file_handler", None) is not None
+
+
+# ---------------------------------------------------------------------------
+# Phase H3 — init_error.log writer
+# ---------------------------------------------------------------------------
+
+
+def _atomic_write_text(path: Path, body: str) -> None:
+    """Atomic file write: tempfile + ``os.replace``.
+
+    Concurrent SIGKILL must not leave a half-written init_error.log on
+    disk. Same pattern as :func:`atomic_write_json` in the state store.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(body)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        # Best-effort cleanup on failure.
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _write_init_error(
+    path: Path,
+    exc: Exception,
+    *,
+    request_id: str | None,
+    command_argv: list[str] | None = None,
+) -> None:
+    """Phase H3 — persist a startup-time failure to ``init_error.log``.
+
+    Overwrites on each call — postmortem reads the LAST init error,
+    not a history. Format mirrors H1's pipeline.log summary so the
+    operator can grep both files with the same regex.
+
+    Never raises: an init_error.log failure must not mask the original
+    exception. The caller propagates the original error.
+    """
+    try:
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Local import — avoid import cycles for non-failure paths.
+        from ryotenkai_shared.errors import RyotenkAIError
+
+        is_ryotenkai = isinstance(exc, RyotenkAIError)
+        title = exc.title if is_ryotenkai else type(exc).__name__
+        code = exc.code.value if is_ryotenkai else "INTERNAL_ERROR"
+        detail = exc.detail if is_ryotenkai else (str(exc) or None)
+        context = (
+            dict(exc.context) if is_ryotenkai and exc.context else None
+        )
+        trace_id = exc.trace_id if is_ryotenkai else None
+
+        cmd_line = (
+            " ".join(command_argv) if command_argv else "python -m ryotenkai_control.pipeline.worker"
+        )
+
+        lines: list[str] = []
+        lines.append(f"{timestamp}  Pipeline init FAILED")
+        lines.append(_SEPARATOR)
+        lines.append(f"  command:  {cmd_line}")
+        lines.append(f"  error:    {title}")
+        lines.append(f"  code:     {code}")
+        if detail:
+            lines.append(f"  detail:   {detail}")
+        if request_id:
+            lines.append(f"  request:  {request_id}")
+        lines.append(f"  trace:    {trace_id or '(none — pre-pipeline error)'}")
+        if context:
+            clean = {k: v for k, v in context.items() if not str(k).startswith("_")}
+            if clean:
+                try:
+                    rendered = json.dumps(clean, default=str, sort_keys=True)
+                except Exception:  # noqa: BLE001 — best-effort
+                    rendered = str(clean)
+                lines.append(f"  context:  {rendered}")
+        lines.append(_SEPARATOR)
+        body = "\n".join(lines) + "\n"
+        _atomic_write_text(path, body)
+    except Exception:  # noqa: BLE001 — best-effort persistence
+        # The init_error.log writer itself failed (disk full / read-only
+        # FS). Swallow — the original exception will still surface via
+        # stderr through ``print_ryotenkai_error``.
+        return
 
 
 # ---------------------------------------------------------------------------
@@ -247,12 +363,15 @@ def _config_from_run_dir(run_dir: Path) -> Path:
     return resolved
 
 
-def _run_pipeline(args: argparse.Namespace) -> int:
+def _run_pipeline(args: argparse.Namespace, base_settings: RuntimeSettings | None = None) -> int:
     """Pipeline body: parse args, build orchestrator, run, return 0 on success.
 
     Extracted from :func:`main` so the top-level exception handler can wrap
     a single function and keep the dispatch table tidy. Raises propagate to
     :func:`main` which renders them via the unified kubectl-style helper.
+
+    ``base_settings`` is optional — when ``main()`` has already resolved
+    it for init_error.log purposes, pass it in to avoid re-loading.
     """
     # Heavy imports stay lazy so ``--help`` doesn't pay torch/mlflow costs.
     from ryotenkai_shared.config.runtime import RuntimeSettings, load_runtime_settings
@@ -274,7 +393,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
 
     cfg = load_pipeline_config(config_path)
 
-    base = load_runtime_settings()
+    base = base_settings if base_settings is not None else load_runtime_settings()
     runs_base_override = os.environ.get("RYOTENKAI_RUNS_BASE_DIR")
     settings = RuntimeSettings(
         runs_base_dir=Path(runs_base_override) if runs_base_override else base.runs_base_dir,
@@ -315,7 +434,10 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         total_stages = len(list(cfg.stages or []))
     except Exception:  # noqa: BLE001 — defensive
         total_stages = None
-    attempt_no = _try_read_attempt_no(orchestrator)
+    # attempt_no = number of attempts in the persisted state, best-
+    # effort. The orchestrator owns state; we read it back via the
+    # store. No-op when the file is missing (very early-init success).
+    attempt_no = _try_read_attempt_no(run_dir, settings.runs_base_dir, orchestrator)
     _log_pipeline_outcome(
         None,
         attempt_no=attempt_no,
@@ -325,7 +447,11 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
-def _try_read_attempt_no(orchestrator: Any) -> int | None:
+def _try_read_attempt_no(
+    run_dir: Path | None,
+    runs_base_dir: Path,
+    orchestrator: Any,
+) -> int | None:
     """Best-effort recovery of the active attempt_no for outcome logging.
 
     Reads from the orchestrator's exposed state when available; falls
@@ -384,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
     # cheap. Each handler is fast — only failure paths hit them.
     from ryotenkai_control.cli.errors import print_ryotenkai_error
     from ryotenkai_shared.api.request_id import current_request_id, generate_request_id
+    from ryotenkai_shared.config.runtime import load_runtime_settings
     from ryotenkai_shared.errors import InternalError, RyotenkAIError
     from ryotenkai_shared.utils.logger import logger
 
@@ -393,8 +520,26 @@ def main(argv: list[str] | None = None) -> int:
     # ``wrap_command``) — inherit if so, else mint our own.
     request_id = current_request_id() or generate_request_id()
 
+    # Phase H3 — resolve runs_base_dir EARLY so init_error.log is
+    # writable on startup-time failures (before orchestrator/pipeline.log
+    # exist). Failures of ``load_runtime_settings`` itself are very rare
+    # (only env-var parsing) ⇒ fall back to stderr-only.
+    base_settings = None
+    runs_base: Path | None = None
     try:
-        return _run_pipeline(args)
+        base_settings = load_runtime_settings()
+        runs_base_override = os.environ.get("RYOTENKAI_RUNS_BASE_DIR")
+        runs_base = (
+            Path(runs_base_override) if runs_base_override else base_settings.runs_base_dir
+        )
+    except Exception:  # noqa: BLE001 — last-resort fallback to stderr
+        base_settings = None
+        runs_base = None
+
+    command_argv = ["python", "-m", "ryotenkai_control.pipeline.worker"] + list(argv or sys.argv[1:])
+
+    try:
+        return _run_pipeline(args, base_settings)
     except KeyboardInterrupt:
         # POSIX SIGINT convention: exit 128 + 2 = 130. Mirror the CLI
         # wrap_command's short "aborted" message on stderr.
@@ -418,6 +563,17 @@ def main(argv: list[str] | None = None) -> int:
             code=exc.code.value,
             title=exc.title,
         )
+        # Phase H3 — if pipeline.log was never attached (startup-time
+        # error: missing secrets, bad config, launch rejection before
+        # ``init_run_logging``) write the structured failure to
+        # ``init_error.log`` so the operator still has a postmortem.
+        if runs_base is not None and not _pipeline_log_attached():
+            _write_init_error(
+                runs_base / "init_error.log",
+                exc,
+                request_id=request_id,
+                command_argv=command_argv,
+            )
         return print_ryotenkai_error(exc, request_id=request_id)
     except SystemExit:
         # argparse / explicit raise SystemExit — let it propagate with
@@ -445,6 +601,13 @@ def main(argv: list[str] | None = None) -> int:
             code=internal.code.value,
             title=internal.title,
         )
+        if runs_base is not None and not _pipeline_log_attached():
+            _write_init_error(
+                runs_base / "init_error.log",
+                exc,
+                request_id=request_id,
+                command_argv=command_argv,
+            )
         return print_ryotenkai_error(internal, request_id=request_id)
 
 
