@@ -216,12 +216,34 @@ class TrainingTimeoutError(InfrastructureError):
     status: ClassVar[int] = 500
 
 
+# ---------------------------------------------------------------------------
+# Metrics buffer (post-Phase-10 honest-failure mode)
+# ---------------------------------------------------------------------------
+
+
+class MetricsBufferTooLargeError(InfrastructureError):
+    """Remote MetricsBuffer file exceeded the ultra-large hard cap.
+
+    Raised by :class:`MetricsBufferRetriever` after the env-tunable
+    threshold has already been bumped (e.g. via
+    ``RYOTENKAI_METRICS_BUFFER_MAX_MB=500``) and the on-pod file is
+    *still* larger than the hard cap (default ~1 GiB). Raising rather
+    than silently skipping ensures the operator sees the failure and
+    can either download the buffer manually or investigate the
+    callback that produced it.
+    """
+
+    code: ClassVar[ErrorCode] = ErrorCode.METRICS_BUFFER_OVERSIZE
+    status: ClassVar[int] = 500
+
+
 __all__ = [
     "DatasetsLibraryMissingError",
     "FileWriteFailedError",
     "HFLoadFailedError",
     "InferenceUnavailableError",
     "LaunchPreparationError",
+    "MetricsBufferTooLargeError",
     "ModelLoadFailedError",
     "PipelineStageFailedError",
     "ProviderRateLimitedError",

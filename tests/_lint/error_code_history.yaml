@@ -107,5 +107,7 @@ codes:
   - CLIENT_DISCONNECT
   # ----- trainer watchdog (post-APIError migration) ------------------
   - TRAINING_TIMEOUT
+  # ----- metrics buffer (post-Phase-10 honest-failure mode) ----------
+  - METRICS_BUFFER_OVERSIZE
   # ----- catch-all (server-side bug) ---------------------------------
   - INTERNAL_ERROR

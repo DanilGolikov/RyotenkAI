@@ -598,6 +598,25 @@ class TrainingLauncher:
         # subprocess is in the same network namespace.
         env["RYOTENKAI_RUNNER_URL"] = "http://127.0.0.1:8080"
 
+        # E-СРЕД fix: surface the user-configured pod lifecycle thresholds
+        # to the pod-side :class:`IdleDetector`. When the operator sets
+        # ``pod_lifecycle`` in the pipeline YAML these env vars override
+        # the in-pod constants; absent config keeps the legacy 48h /
+        # 20min defaults baked into ``DEFAULT_MAX_LIFETIME`` /
+        # ``DEFAULT_IDLE_THRESHOLD``.
+        pod_lifecycle = getattr(self.config, "pod_lifecycle", None)
+        if pod_lifecycle is not None:
+            max_lifetime_hours = getattr(pod_lifecycle, "max_lifetime_hours", None)
+            if max_lifetime_hours is not None:
+                env["RYOTENKAI_POD_MAX_LIFETIME_HOURS"] = str(float(max_lifetime_hours))
+            idle_threshold_minutes = getattr(
+                pod_lifecycle, "idle_threshold_minutes", None,
+            )
+            if idle_threshold_minutes is not None:
+                env["RYOTENKAI_POD_IDLE_THRESHOLD_MINUTES"] = str(
+                    float(idle_threshold_minutes),
+                )
+
         # Phase 14.D+F — provider supplies its own runtime env vars.
         # Replaces the pre-14.D hardcoded
         # ``env["RUNPOD_VOLUME_KIND"] = "persistent"`` (which fired

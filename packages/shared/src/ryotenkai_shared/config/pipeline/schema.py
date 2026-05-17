@@ -12,6 +12,7 @@ from ..evaluation import EvaluationConfig
 from ..inference import InferenceConfig
 from ..integrations import IntegrationsConfig, HuggingFaceHubConfig
 from ..model import ModelConfig  # noqa: TC001
+from ..pod_lifecycle import PodLifecycleConfig
 from ..reports import ReportsConfig
 from ..training import AdaLoraConfig, LoraConfig, TrainingOnlyConfig
 from .datasets import PipelineDatasetMixin
@@ -96,6 +97,18 @@ class PipelineConfig(
         description=(
             "Which report plugins appear in the post-run Markdown report and in "
             "what order. Default (null) uses the built-in section list."
+        ),
+    )
+
+    # Optional pod-lifecycle thresholds. Translates to env vars at
+    # job-submission time so the in-pod :class:`IdleDetector` no longer
+    # has to hard-code 48h / 20m (E-СРЕД fix, post-Phase-10 research).
+    pod_lifecycle: PodLifecycleConfig | None = Field(
+        default=None,
+        description=(
+            "Optional auto-shutdown thresholds for the pod runner's "
+            "IdleDetector. When omitted, the pod-side defaults "
+            "(48h max-lifetime, 20m idle window) apply."
         ),
     )
 

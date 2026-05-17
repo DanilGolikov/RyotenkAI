@@ -196,6 +196,14 @@ class ErrorCode(StrEnum):
     # ``TRAINING_FAILED`` so dashboards can group on it.
     TRAINING_TIMEOUT = "TRAINING_TIMEOUT"
 
+    # ----- metrics buffer (post-Phase-10 honest-failure mode) ----------
+    # Raised by :class:`MetricsBufferRetriever` when the on-pod buffer
+    # file exceeds the *hard* ultra-large cap (default 1 GiB after the
+    # env-tunable threshold is bumped). Below the hard cap the retriever
+    # emits a typed ``MetricsBufferOversizedEvent`` warning but still
+    # downloads; above it it refuses outright so the operator notices.
+    METRICS_BUFFER_OVERSIZE = "METRICS_BUFFER_OVERSIZE"
+
     # ----- catch-all (server-side bug) ---------------------------------
     INTERNAL_ERROR = "INTERNAL_ERROR"
 

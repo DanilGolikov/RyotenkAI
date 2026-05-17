@@ -248,10 +248,12 @@ def test_concrete_subclass_count_matches_phase_a1_catalog() -> None:
     added 38 more (pod-runner classes that used to raise via APIError,
     control-API classes for typed HTTPException replacements, plus
     TrainingTimeoutError for the supervisor watchdog) for a total of
-    73. Bumping this count requires a conscious update so we notice
-    when somebody adds or removes a typed exception.
+    73. The post-Phase-10 buffer-honest-failure fix added
+    :class:`MetricsBufferTooLargeError` (=74). Bumping this count
+    requires a conscious update so we notice when somebody adds or
+    removes a typed exception.
     """
-    expected_concrete_count = 73
+    expected_concrete_count = 74
     actual = len(_concrete_subclasses())
     assert actual == expected_concrete_count, (
         f"Expected {expected_concrete_count} concrete subclasses; "

@@ -123,6 +123,7 @@ _DEFAULT_TITLES: dict[ErrorCode, str] = {
     ErrorCode.PROVIDER_TOKEN_INVALID: "Provider token invalid",
     ErrorCode.CLIENT_DISCONNECT: "Client disconnected mid-upload",
     ErrorCode.TRAINING_TIMEOUT: "Training wall-clock timeout exceeded",
+    ErrorCode.METRICS_BUFFER_OVERSIZE: "Metrics buffer exceeds maximum size",
     # ----- transport (Mac client synthesised) --------------------------
     ErrorCode.TRANSPORT_UNREACHABLE: "Transport unreachable",
     # ----- catch-all ---------------------------------------------------

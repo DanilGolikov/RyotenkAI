@@ -31,6 +31,7 @@ from .integrations import (
 )
 from .model import ModelConfig
 from .pipeline import PipelineConfig
+from .pod_lifecycle import PodLifecycleConfig
 from .providers.ssh import SSHConfig, SSHConnectSettings
 from .reports import ReportsConfig
 from .runtime import RuntimeSettings, load_runtime_settings
@@ -80,6 +81,7 @@ __all__ = [
     "ModelConfig",
     "PhaseHyperparametersConfig",
     "PipelineConfig",
+    "PodLifecycleConfig",
     "QLoRAConfig",
     "QloraConfig",
     "ReportsConfig",
