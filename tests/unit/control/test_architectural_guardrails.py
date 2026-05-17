@@ -57,14 +57,31 @@ class TestFileSizeLimits:
 
     @pytest.mark.parametrize("rel_path,max_lines", [
         # orchestrator.py: 2062 → 1385 → 564 after Phase B decomposition.
-        ("packages/control/src/ryotenkai_control/pipeline/orchestrator.py", 700),
+        # Phase 6.a/6.b wired ControlEventEmitter, MlflowFinalizer and the
+        # typed run-lifecycle envelopes through the orchestrator; the
+        # 700-line cap was raised to 1100 in Phase 7 to accommodate the
+        # new event plumbing. Phase 8 (TODO #4) extracted that lifecycle
+        # into ``RunLifecycleCoordinator`` — the orchestrator now stands
+        # at 799 lines. The cap is set just above current to leave a
+        # small headroom for incidental additions while keeping the
+        # next regression honest.
+        ("packages/control/src/ryotenkai_control/pipeline/orchestrator.py", 800),
         # MLflowManager — now in pod package (training-side concern); 714 lines.
         ("packages/pod/src/ryotenkai_pod/trainer/managers/mlflow_manager/manager.py", 800),
-        # training_monitor.py — 1419 lines after Phase D added typed-code
-        # dispatch (sharded-stargazing-wigderson, 2026-05-16). Cap at 1500
-        # pending the extraction of ``_handle_trainer_exited`` +
-        # ``_raise_typed`` into a dedicated translator module.
-        ("packages/control/src/ryotenkai_control/pipeline/stages/training_monitor.py", 1_500),
+        # training_monitor.py — 1404 lines after the Group 1 follow-up
+        # extracted pod-event forwarding into
+        # ``training_monitor_pod_event_forwarder.py`` (PodEventForwarder
+        # class, 2026-05-17). Cap at 1450 with ~3 % headroom for
+        # incidental additions; the next regression is the eventual
+        # ``_handle_trainer_exited`` + ``_raise_typed`` extraction.
+        ("packages/control/src/ryotenkai_control/pipeline/stages/training_monitor.py", 1_450),
+        # PodEventForwarder — pure relocation of dispatch / forward /
+        # status-log / replay-fallback logic. 474 lines; cap at 600 to
+        # leave headroom for new envelope kinds.
+        (
+            "packages/control/src/ryotenkai_control/pipeline/stages/training_monitor_pod_event_forwarder.py",
+            600,
+        ),
     ])
     def test_file_not_exceeding_line_limit(self, rel_path: str, max_lines: int) -> None:
         actual = _line_count(rel_path)

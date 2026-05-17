@@ -262,6 +262,11 @@ allow:
   - path: packages/shared/src/ryotenkai_shared/utils/text_utils.py
     reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
 
+  # Pure type-alias module for the upcaster registry. Behaviour is exercised
+  # transitively via tests/unit/shared/events/test_upcasters.py.
+  - path: packages/shared/src/ryotenkai_shared/events/upcasters/_types.py
+    reason: "Pure type-alias module (Upcaster Callable signature); behaviour exercised via tests/unit/shared/events/test_upcasters.py"
+
 allow_patterns:
   - pattern: "packages/*/src/ryotenkai_*/version.py"
     reason: "Auto-generated __version__ stubs; trivial."
