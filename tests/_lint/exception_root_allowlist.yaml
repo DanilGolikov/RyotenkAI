@@ -41,6 +41,10 @@ allow:
   # ----- AppError + Result legacy: retired in Phase A2 finale -------
   # (entries removed together with the deleted result.py module)
 
+  # ----- shared events (Phase 1 — unified event system) ------------
+  - path: ryotenkai_shared.events.codec.MalformedEventError
+    reason: "phase-1-events-codec: technical exception consumed by journal readers in-package (carries raw_line + cause for torn-write detection); not user-surfaced — migrated to ErrorCode.EVENT_DECODE_FAILED when Phase 3 emits problem+json from the reader."
+
   # ----- shared clients (Phase E or F) ------------------------------
   - path: ryotenkai_shared.utils.clients.problem_details.TransportError
     reason: "phase-A1-pending-migration: APIException subclass; replaced by errors.TransportError in Phase B"
