@@ -768,6 +768,91 @@ ALLOWLIST: list[AllowlistEntry] = [
         added="2026-05-12",
         renewed="2026-05-12",
     ),
+    # Phase 10 follow-up — pod→control event forwarding (Issue 1).
+    # AsyncMock pins the legacy JobClient lifecycle (aclose / get_status)
+    # for tests that exercise the WS-consumer loop without a real pod;
+    # mirrors the same pattern used in test_training_monitor_v2.py.
+    AllowlistEntry(
+        path="tests/integration/control/events/test_pod_to_control_forwarding.py",
+        line=105,
+        pattern="AsyncMock_lifecycle_observer",
+        reason="Pins JobClient.aclose so the monitor cleanup path completes without a real pod.",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
+    AllowlistEntry(
+        path="tests/integration/control/events/test_pod_to_control_forwarding.py",
+        line=106,
+        pattern="AsyncMock_interaction",
+        reason="Pins JobClient.get_status return value for monitor loop transition (terminal snapshot fallback).",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
+    # Phase 10 follow-up — HTTP replay fallback (Issue 2).
+    AllowlistEntry(
+        path="tests/integration/control/events/test_replay_fallback.py",
+        line=117,
+        pattern="AsyncMock_interaction",
+        reason="Pins JobClient.get_status return value driving the post-replay status fallback path.",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
+    AllowlistEntry(
+        path="tests/integration/control/events/test_replay_fallback.py",
+        line=118,
+        pattern="AsyncMock_lifecycle_observer",
+        reason="Pins JobClient.aclose for the monitor cleanup path in the replay-then-resubscribe scenario.",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
+    AllowlistEntry(
+        path="tests/integration/control/events/test_replay_fallback.py",
+        line=145,
+        pattern="AsyncMock_interaction",
+        reason="Pins JobClient.get_status return value for the replay-transport-error → status-fallback test.",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
+    AllowlistEntry(
+        path="tests/integration/control/events/test_replay_fallback.py",
+        line=146,
+        pattern="AsyncMock_lifecycle_observer",
+        reason="Pins JobClient.aclose for the monitor cleanup path on the replay-transport-error scenario.",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
+    AllowlistEntry(
+        path="tests/integration/control/events/test_replay_fallback.py",
+        line=168,
+        pattern="AsyncMock_interaction",
+        reason="Pins JobClient.get_status returning non-terminal state for the legacy MONITOR_REPLAY_TRUNCATED raise path.",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
+    AllowlistEntry(
+        path="tests/integration/control/events/test_replay_fallback.py",
+        line=169,
+        pattern="AsyncMock_lifecycle_observer",
+        reason="Pins JobClient.aclose for the monitor cleanup path on the non-terminal status fallback.",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
+    AllowlistEntry(
+        path="tests/integration/control/events/test_replay_fallback.py",
+        line=203,
+        pattern="AsyncMock_interaction",
+        reason="Pins JobClient.get_status for the test where the replay page itself carries the terminal event.",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
+    AllowlistEntry(
+        path="tests/integration/control/events/test_replay_fallback.py",
+        line=204,
+        pattern="AsyncMock_lifecycle_observer",
+        reason="Pins JobClient.aclose for the monitor cleanup path on the terminal-in-replay test.",
+        added="2026-05-17",
+        renewed="2026-05-17",
+    ),
 ]
 
 

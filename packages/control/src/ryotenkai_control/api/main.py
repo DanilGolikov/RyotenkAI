@@ -12,6 +12,7 @@ from ryotenkai_control.api.dependencies import get_settings
 from ryotenkai_control.api.routers import (
     attempts,
     datasets,
+    events,
     integrations,
     jobs,
     launch,
@@ -81,6 +82,9 @@ def configure_app(app: FastAPI, settings: ApiSettings) -> None:
         # registered BEFORE ``runs.router`` (whose ``/{run_id:path}`` route
         # would otherwise swallow ``/runs/<id>/job/...``).
         jobs.router,
+        # ``events`` carries prefix ``/runs/{run_id:path}/events`` — same
+        # ordering rationale as ``jobs`` above.
+        events.router,
         runs.router,
     ]
     for router in api_routers:
