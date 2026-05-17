@@ -1,44 +1,25 @@
-"""Phase 3 — :class:`RunnerEventCallback` contract.
+"""Phase 2 — :class:`RunnerEventCallback` async-queue contract.
 
-Unit coverage uses a captured ``httpx.MockTransport`` so we can
-assert on the exact POST payloads without paying for a real HTTP
-server. One integration test wires the callback against a live
-:class:`fastapi.testclient.TestClient` of the runner so the
-end-to-end loopback path is exercised at least once.
+Coverage (slim — the heavy integration is in the runner-side internal
+endpoint tests):
 
-Coverage matrix:
+* The callback is a no-op when ``RYOTENKAI_RUNNER_URL`` is unset.
+* :meth:`on_step_end` builds a typed envelope and enqueues it.
+* Drop-oldest semantics bump the counter on overflow.
 
-- TestEnablement       env-driven activation, no-op when disabled
-- TestEventTypes       each Trainer hook publishes the right kind
-- TestFlushPolicy      buffer behaviour around ``flush_every``
-- TestFailureHandling  retry, consecutive failures, disable + drain
-- TestEndOfTraining    on_train_end flushes + closes the client
-- TestIntegration      real loopback POST → FastAPI runner
+Heavy HF integration (full Trainer lifecycle, real httpx transport)
+lives in the integration suite. This file only asserts the public
+contract on the new envelope-based path without spinning up the
+trainer.
 """
 
 from __future__ import annotations
-
-# The callback's ``transformers`` import (and the ``src.training``
-# package's heavy notifiers / orchestrator chain pulled in through
-# the regular package path) is not available in every dev
-# environment. Tests must run on a slim venv too — production / CI
-# is the only place that has full ML deps installed. So we:
-#
-# 1. Stub ``transformers`` (and any siblings the import cascade
-#    happens to pull in) BEFORE the callback module loads.
-# 2. Load the callback module DIRECTLY from its file path, bypassing
-#    ``src.training/__init__`` so we don't trigger the orchestrator
-#    cascade that imports ``datasets`` etc.
-#
-# The stubs are minimal — ``TrainerCallback`` is just a base class
-# the callback subclasses, so an empty placeholder is enough for
-# imports to succeed. Real CI runs install transformers and the
-# stub branch is never taken.
 
 import importlib.util as _importlib_util
 import pathlib as _pathlib
 import sys as _sys
 import types as _types
+from dataclasses import dataclass
 
 
 def _stub(name: str, attrs: dict[str, object] | None = None) -> None:
@@ -54,9 +35,7 @@ def _stub(name: str, attrs: dict[str, object] | None = None) -> None:
 
 
 class _TrainerCallback:
-    """Stand-in for ``transformers.TrainerCallback`` when the real
-    library isn't installed in the test env. RunnerEventCallback only
-    subclasses it; no real logic is inherited."""
+    """Stand-in for ``transformers.TrainerCallback``."""
 
 
 _stub("transformers", {"TrainerCallback": _TrainerCallback})
@@ -64,7 +43,8 @@ _stub("colorlog", {"ColoredFormatter": type})
 
 _CALLBACK_PATH = (
     _pathlib.Path(__file__).resolve().parents[5]
-    / "packages" / "pod" / "src" / "ryotenkai_pod" / "trainer" / "callbacks" / "runner_event_callback.py"
+    / "packages" / "pod" / "src" / "ryotenkai_pod" / "trainer"
+    / "callbacks" / "runner_event_callback.py"
 )
 _spec = _importlib_util.spec_from_file_location(
     "_ryotenkai_runner_event_callback_under_test", _CALLBACK_PATH,
@@ -76,19 +56,7 @@ _spec.loader.exec_module(_module)
 
 RunnerEventCallback = _module.RunnerEventCallback
 RUNNER_URL_ENV = _module.RUNNER_URL_ENV
-MAX_CONSECUTIVE_FAILURES = _module.MAX_CONSECUTIVE_FAILURES
-
-from dataclasses import dataclass  # noqa: E402
-from typing import Any  # noqa: E402
-
-import httpx  # noqa: E402
-import pytest  # noqa: E402
-
-
-# ---------------------------------------------------------------------------
-# Trainer-state stubs — TrainerCallback ignores everything except the
-# four fields below, so we don't need a real ``TrainerState`` instance.
-# ---------------------------------------------------------------------------
+DEFAULT_QUEUE_CAP = _module.DEFAULT_QUEUE_CAP
 
 
 @dataclass
@@ -100,234 +68,219 @@ class _State:
 
 @dataclass
 class _Args:
-    num_train_epochs: float = 1.0
-    per_device_train_batch_size: int = 4
+    num_train_epochs: int = 1
+    per_device_train_batch_size: int = 1
+    gradient_accumulation_steps: int = 1
+    learning_rate: float = 0.001
 
 
-class _Control:  # pragma: no cover — opaque to the callback
+@dataclass
+class _Control:
     pass
 
 
-def _hook_args(state: _State | None = None) -> dict[str, Any]:
-    """Common kwargs the Trainer would normally pass."""
-    return {
-        "args": _Args(),
-        "state": state or _State(),
-        "control": _Control(),
-    }
-
-
-# ---------------------------------------------------------------------------
-# MockTransport helper — captures every POSTed body for assertion.
-# ---------------------------------------------------------------------------
-
-
-class _Capturing:
-    """Stateful httpx.MockTransport handler.
-
-    Drops a recording of every POST into ``self.calls``. Tests can
-    set ``self.fail_until`` to make the first N posts fail (used by
-    failure-handling tests).
-    """
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self.fail_until: int = 0
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        if self.fail_until > 0:
-            self.fail_until -= 1
-            return httpx.Response(500, json={"error": "synthetic"})
-        body = request.read()
-        import json as _json
-
-        self.calls.append({
-            "url": str(request.url),
-            "json": _json.loads(body) if body else None,
-        })
-        return httpx.Response(202, json={"offset": len(self.calls) - 1})
-
-
-def _build(callback: RunnerEventCallback, capture: _Capturing) -> None:
-    """Replace the callback's lazy client with one wired to MockTransport."""
-    transport = httpx.MockTransport(capture)
-    callback._client = httpx.Client(transport=transport, timeout=2.0)
-
-
-# ---------------------------------------------------------------------------
-# Enablement
-# ---------------------------------------------------------------------------
-
-
 class TestEnablement:
-    def test_no_op_when_env_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_disabled_when_env_missing(self, monkeypatch) -> None:
         monkeypatch.delenv(RUNNER_URL_ENV, raising=False)
         cb = RunnerEventCallback()
         assert cb.enabled is False
-        cb.on_train_begin(**_hook_args())
-        # Nothing buffered, nothing posted, nothing raised.
-        assert cb.buffer_size == 0
+        # Hooks return immediately and no envelope is enqueued.
+        cb.on_step_end(_Args(), _State(global_step=10), _Control())
+        assert cb.queue_size == 0
 
-    def test_explicit_url_overrides_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv(RUNNER_URL_ENV, raising=False)
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080")
+    def test_enabled_when_runner_url_set(self) -> None:
+        cb = RunnerEventCallback(runner_url="http://127.0.0.1:9999")
         assert cb.enabled is True
-
-    def test_env_url_used_when_arg_omitted(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv(RUNNER_URL_ENV, "http://127.0.0.1:8080")
-        cb = RunnerEventCallback()
-        assert cb.enabled is True
+        # Stop the daemon worker so the test doesn't hang on close.
+        cb._stop_evt.set()
 
 
-# ---------------------------------------------------------------------------
-# Per-hook events
-# ---------------------------------------------------------------------------
+class TestEnqueue:
+    def test_on_step_end_emits_typed_envelope(self) -> None:
+        cb = RunnerEventCallback(runner_url="http://127.0.0.1:9999")
+        cb._stop_evt.set()  # disable background worker for inspection
+        cb.on_step_end(_Args(), _State(global_step=10), _Control())
+        assert cb.queue_size == 1
+        envelope = cb._queue.get()
+        assert envelope.kind == "ryotenkai.pod.training.step"
+        assert envelope.payload.step == 10
 
-
-class TestEventTypes:
-    def test_on_train_begin_publishes_training_started(self) -> None:
-        cap = _Capturing()
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080")
-        _build(cb, cap)
-        cb.on_train_begin(**_hook_args())
-        assert len(cap.calls) == 1
-        body = cap.calls[0]["json"]
-        assert body["kind"] == "training_started"
-        assert body["payload"]["max_steps"] == 100
-        assert body["payload"]["per_device_train_batch_size"] == 4
-
-    def test_on_step_end_emits_at_flush_boundaries(self) -> None:
-        cap = _Capturing()
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080", flush_every=10)
-        _build(cb, cap)
-        # Step 5 → no event (5 % 10 != 0)
-        cb.on_step_end(**_hook_args(_State(global_step=5)))
-        assert cap.calls == []
-        # Step 10 → emitted
-        cb.on_step_end(**_hook_args(_State(global_step=10, epoch=0.1)))
-        assert any(c["json"]["kind"] == "step" for c in cap.calls)
-
-    def test_on_step_end_attaches_last_loss(self) -> None:
-        cap = _Capturing()
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080", flush_every=10)
-        _build(cb, cap)
-        cb.on_log(logs={"loss": 0.42, "lr": 1e-5}, **_hook_args(_State(global_step=10)))
-        cb.on_step_end(**_hook_args(_State(global_step=10)))
-        step_payload = next(
-            c["json"]["payload"] for c in cap.calls
-            if c["json"]["kind"] == "step"
-        )
-        assert step_payload["loss"] == 0.42
-
-    def test_on_evaluate_emits_metrics(self) -> None:
-        cap = _Capturing()
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080")
-        _build(cb, cap)
-        cb.on_evaluate(
-            metrics={"eval_loss": 0.3, "eval_accuracy": 0.85},
-            **_hook_args(_State(global_step=50)),
-        )
-        body = cap.calls[-1]["json"]
-        assert body["kind"] == "eval_metrics"
-        assert body["payload"]["metrics"]["eval_accuracy"] == 0.85
-
-    def test_on_save_emits_checkpoint(self) -> None:
-        cap = _Capturing()
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080")
-        _build(cb, cap)
-        cb.on_save(**_hook_args(_State(global_step=100)))
-        body = cap.calls[-1]["json"]
-        assert body["kind"] == "checkpoint_saved"
-        assert body["payload"]["step"] == 100
-
-    def test_on_log_buffers_when_below_threshold(self) -> None:
-        cap = _Capturing()
-        # flush_every=10 → on_log alone (no flush_now=True) buffers.
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080", flush_every=10)
-        _build(cb, cap)
-        cb.on_log(logs={"x": 1}, **_hook_args())
-        assert cap.calls == []
-        assert cb.buffer_size == 1
-
-
-# ---------------------------------------------------------------------------
-# Flush policy
-# ---------------------------------------------------------------------------
-
-
-class TestFlushPolicy:
-    def test_buffer_drains_after_flush_every_logs(self) -> None:
-        cap = _Capturing()
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080", flush_every=3)
-        _build(cb, cap)
-        for i in range(3):
-            cb.on_log(logs={"i": i}, **_hook_args())
-        # Three buffered + the third triggered a flush → all three posted.
-        assert len(cap.calls) == 3
-        assert cb.buffer_size == 0
-
-
-# ---------------------------------------------------------------------------
-# Failure handling
-# ---------------------------------------------------------------------------
-
-
-class TestFailureHandling:
-    def test_failed_post_keeps_event_buffered(self) -> None:
-        cap = _Capturing()
-        cap.fail_until = 1  # next post fails
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080")
-        _build(cb, cap)
-        cb.on_train_begin(**_hook_args())
-        # fail_until=1 → first post 500 → event re-buffered.
-        assert cb.buffer_size == 1
-        # Next flush succeeds (fail_until=0).
-        cb._flush()
-        assert cb.buffer_size == 0
-        assert len(cap.calls) == 1
-
-    def test_disables_after_max_consecutive_failures(self) -> None:
-        cap = _Capturing()
-        cap.fail_until = 100  # always fail
+    def test_drop_oldest_increments_counter(self) -> None:
         cb = RunnerEventCallback(
-            runner_url="http://127.0.0.1:8080", flush_every=1,
+            runner_url="http://127.0.0.1:9999",
+            queue_cap=2,
         )
-        _build(cb, cap)
-        # MAX_CONSECUTIVE_FAILURES = 3.
-        for i in range(MAX_CONSECUTIVE_FAILURES):
-            cb.on_log(logs={"i": i}, **_hook_args())
+        cb._stop_evt.set()
+        # Use ``_flush_every=1`` semantic by hitting the step end three
+        # times. Each call enqueues; the third one forces a drop-oldest.
+        cb.on_step_end(_Args(), _State(global_step=10), _Control())
+        cb.on_step_end(_Args(), _State(global_step=20), _Control())
+        cb.on_step_end(_Args(), _State(global_step=30), _Control())
+        assert cb.dropped_total >= 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 fix — typed ``TrainingFailedEvent`` emission contract.
+# ---------------------------------------------------------------------------
+
+
+def _silence_worker(cb) -> None:
+    """Stop and join the background worker so it never drains the queue.
+
+    The callback starts its daemon worker in ``__init__``; if we don't
+    stop and join it, the worker can race the test and consume queued
+    envelopes before we inspect them (no real HTTP server is listening,
+    so it would just drop with a counter increment).
+    """
+    cb._stop_evt.set()
+    if getattr(cb, "_worker", None) is not None:
+        cb._worker.join(timeout=1.0)
+
+
+def _drain_queue(cb) -> list:
+    out = []
+    while True:
+        try:
+            out.append(cb._queue.get_nowait())
+        except Exception:
+            break
+    return out
+
+
+class TestTrainingFailed:
+    """Contract tests for :meth:`RunnerEventCallback.emit_training_failed`."""
+
+    def test_emit_training_failed_builds_correct_envelope(self) -> None:
+        cb = RunnerEventCallback(runner_url="http://127.0.0.1:9999")
+        _silence_worker(cb)
+
+        try:
+            raise RuntimeError("boom")
+        except RuntimeError as exc:
+            cb.emit_training_failed(exc=exc, step=7)
+
+        events = _drain_queue(cb)
+        assert len(events) == 1
+        envelope = events[0]
+        assert envelope.kind == "ryotenkai.pod.training.failed"
+        assert envelope.severity == "error"
+        assert envelope.payload.error_type == "RuntimeError"
+        assert envelope.payload.message == "boom"
+        assert envelope.payload.step == 7
+        assert envelope.payload.traceback_excerpt  # non-empty
+        # ``RuntimeError`` should appear inside the formatted traceback.
+        assert "RuntimeError" in envelope.payload.traceback_excerpt
+
+    def test_emit_training_failed_then_on_train_end_does_not_emit_completed(
+        self,
+    ) -> None:
+        cb = RunnerEventCallback(runner_url="http://127.0.0.1:9999")
+        _silence_worker(cb)
+
+        try:
+            raise ValueError("config invalid")
+        except ValueError as exc:
+            cb.emit_training_failed(exc=exc)
+
+        # Now simulate HF Trainer's try/finally calling on_train_end.
+        cb.on_train_end(_Args(), _State(global_step=42), _Control())
+
+        events = _drain_queue(cb)
+        # Exactly ONE envelope: the failed event. on_train_end MUST NOT
+        # have enqueued a TrainingCompletedEvent because ``failed`` is set.
+        assert len(events) == 1
+        assert events[0].kind == "ryotenkai.pod.training.failed"
+        assert cb.failed is True
+
+    def test_traceback_excerpt_truncated_to_2kb(self) -> None:
+        cb = RunnerEventCallback(runner_url="http://127.0.0.1:9999")
+        _silence_worker(cb)
+
+        # Forge a giant traceback excerpt input directly to assert the
+        # truncation cap — sidesteps platform / Python noise in real
+        # tracebacks.
+        giant = "x" * 5000  # 5 KB of body text
+        cb.emit_training_failed(
+            error_type="RuntimeError",
+            message="big",
+            traceback_excerpt=giant,
+            step=0,
+        )
+        events = _drain_queue(cb)
+        assert len(events) == 1
+        excerpt = events[0].payload.traceback_excerpt
+        # 2 KB cap (UTF-8 bytes). The truncation suffix lives inside
+        # the cap, never past it.
+        assert len(excerpt.encode("utf-8")) <= 2048
+        # Sanity: truncation marker present so consumers can detect cut.
+        assert "...[truncated]" in excerpt
+
+    def test_step_reflects_current_global_step(self) -> None:
+        cb = RunnerEventCallback(runner_url="http://127.0.0.1:9999")
+        _silence_worker(cb)
+        # Simulate HF reporting step 42 via on_step_end (flush_every=10
+        # by default; the step is cached regardless of whether the
+        # envelope is emitted).
+        cb.on_step_end(_Args(), _State(global_step=42), _Control())
+        # Drain the step event so only the failed event remains in queue.
+        _drain_queue(cb)
+
+        try:
+            raise RuntimeError("after step 42")
+        except RuntimeError as exc:
+            cb.emit_training_failed(exc=exc)
+
+        events = _drain_queue(cb)
+        assert len(events) == 1
+        assert events[0].payload.step == 42
+
+    def test_step_minus_one_when_pre_train(self) -> None:
+        cb = RunnerEventCallback(runner_url="http://127.0.0.1:9999")
+        _silence_worker(cb)
+        # No on_train_begin / on_step_end were ever called.
+        try:
+            raise RuntimeError("pre-loop crash")
+        except RuntimeError as exc:
+            cb.emit_training_failed(exc=exc)
+
+        events = _drain_queue(cb)
+        assert len(events) == 1
+        assert events[0].payload.step == -1
+
+    def test_failed_flag_set_even_when_disabled(self, monkeypatch) -> None:
+        """``_failed_flag`` propagates even on no-op callbacks.
+
+        Keeps ``on_train_end`` symmetric: when the callback was
+        instantiated without ``RYOTENKAI_RUNNER_URL`` no envelope is
+        emitted, but the flag still flips so any subsequent hook does
+        not get a free pass.
+        """
+        monkeypatch.delenv(RUNNER_URL_ENV, raising=False)
+        cb = RunnerEventCallback()
         assert cb.enabled is False
-        # Subsequent calls are silent no-ops.
-        cb.on_step_end(**_hook_args(_State(global_step=10)))
-        cb.on_save(**_hook_args(_State(global_step=10)))
-        # Buffer cleared on disable; no more posts.
-        assert cb.buffer_size == 0
+        cb.emit_training_failed(error_type="X", message="y", step=0)
+        # No envelopes (disabled), but the flag tracks the failure.
+        assert cb.queue_size == 0
+        assert cb.failed is True
+        # And ``on_train_end`` must not enqueue a Completed event either.
+        cb.on_train_end(_Args(), _State(global_step=1), _Control())
+        assert cb.queue_size == 0
 
-
-# ---------------------------------------------------------------------------
-# End of training
-# ---------------------------------------------------------------------------
-
-
-class TestEndOfTraining:
-    def test_on_train_end_emits_complete_and_drains(self) -> None:
-        cap = _Capturing()
-        cb = RunnerEventCallback(runner_url="http://127.0.0.1:8080")
-        _build(cb, cap)
-        cb.on_train_end(**_hook_args(_State(global_step=200)))
-        kinds = [c["json"]["kind"] for c in cap.calls]
-        assert "training_complete" in kinds
-        # Client closed after train end.
-        assert cb._client is None
-
-
-# Note: an ASGITransport-based integration test was prototyped here
-# but proved too coupled to httpx + Starlette internals to be useful.
-# The unit tests above (with ``httpx.MockTransport``) give us full
-# behaviour coverage of the callback's HTTP path; the actual
-# end-to-end loopback round-trip is exercised in Phase 6's RunPod
-# manual smoke and the supervisor integration tests in
-# ``test_supervisor.py``. The real wire never sees a stub —
-# uvicorn binds 127.0.0.1 in the docker entrypoint and the trainer
-# subprocess inherits ``RYOTENKAI_RUNNER_URL`` from the supervisor's
-# ``submit_and_spawn(env=...)`` call.
+    def test_explicit_fields_override_exception_derivation(self) -> None:
+        cb = RunnerEventCallback(runner_url="http://127.0.0.1:9999")
+        _silence_worker(cb)
+        try:
+            raise RuntimeError("generic")
+        except RuntimeError as exc:
+            cb.emit_training_failed(
+                exc=exc,
+                error_type="OutOfMemoryError",
+                message="VRAM exhausted",
+                step=99,
+            )
+        events = _drain_queue(cb)
+        assert len(events) == 1
+        payload = events[0].payload
+        assert payload.error_type == "OutOfMemoryError"
+        assert payload.message == "VRAM exhausted"
+        assert payload.step == 99

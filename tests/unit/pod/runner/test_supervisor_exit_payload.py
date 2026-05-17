@@ -346,9 +346,12 @@ class TestSupervisorReapWithExitFile:
         await _wait_terminal(fsm)
 
         # Find the trainer_exited event and check it carries the typed data.
-        exited = [e for e in list(bus._buffer) if e.kind == "trainer_exited"]
+        exited = [
+            e for e in list(bus._buffer)
+            if getattr(e, "original_type", None) == "trainer_exited"
+        ]
         assert exited, "expected a trainer_exited event"
-        body = exited[-1].payload
+        body = exited[-1].raw_payload
         assert body["payload_source"] == "trainer_file"
         assert body["code"] == "TRAINING_OOM"
         assert body["message"] == "simulated OOM"
@@ -373,9 +376,12 @@ class TestSupervisorReapWithExitFile:
             workdir=workdir,
         )
         await _wait_terminal(fsm)
-        exited = [e for e in list(bus._buffer) if e.kind == "trainer_exited"]
+        exited = [
+            e for e in list(bus._buffer)
+            if getattr(e, "original_type", None) == "trainer_exited"
+        ]
         assert exited
-        body = exited[-1].payload
+        body = exited[-1].raw_payload
         assert body["payload_source"] == "missing"
         assert body["code"] == ErrorCode.INTERNAL_ERROR.value
         assert "exit_code=7" in body["message"]

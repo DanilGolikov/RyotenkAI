@@ -487,3 +487,94 @@ class TestUrlScheme:
             ),
         )
         assert client._base_url == "http://127.0.0.1:18080"
+
+
+# ---------------------------------------------------------------------------
+# TestReplayEvents (Phase 10 follow-up — HTTP fallback when WS 4410)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestReplayEvents:
+    """Coverage for the cursor-paginated NDJSON replay endpoint."""
+
+    async def test_replay_parses_ndjson_and_extracts_next_offset(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            body = "\n".join([
+                json.dumps({"offset": 5, "kind": "x", "payload": {}}),
+                json.dumps({"offset": 6, "kind": "y", "payload": {}}),
+            ]) + "\n"
+            return httpx.Response(
+                200,
+                content=body,
+                headers={
+                    "content-type": "application/x-ndjson",
+                    "X-Next-Offset": "6",
+                },
+            )
+
+        client = _client_with_handler(_handler)
+        events, next_offset = await client.replay_events("job-abc", after_offset=4)
+
+        assert [ev["offset"] for ev in events] == [5, 6]
+        assert next_offset == 6
+        assert "after_offset=4" in captured["url"]
+        assert "/api/v1/jobs/job-abc/events/replay" in captured["url"]
+
+    async def test_replay_empty_page_returns_unchanged_cursor(self) -> None:
+        def _handler(_r: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content="",
+                headers={
+                    "content-type": "application/x-ndjson",
+                    "X-Next-Offset": "999",
+                },
+            )
+
+        client = _client_with_handler(_handler)
+        events, next_offset = await client.replay_events("job-abc", after_offset=999)
+        assert events == []
+        assert next_offset == 999
+
+    async def test_replay_404_raises_job_not_found(self) -> None:
+        def _handler(_r: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                404,
+                json={
+                    "type": "https://ryotenkai.dev/errors/JOB_NOT_FOUND",
+                    "title": "Job not found",
+                    "status": 404,
+                    "detail": "no such job",
+                    "code": "JOB_NOT_FOUND",
+                },
+                headers={"content-type": "application/problem+json"},
+            )
+
+        client = _client_with_handler(_handler)
+        with pytest.raises(JobNotFoundError):
+            await client.replay_events("job-missing", after_offset=0)
+
+    async def test_replay_skips_malformed_lines(self) -> None:
+        def _handler(_r: httpx.Request) -> httpx.Response:
+            body = (
+                json.dumps({"offset": 1, "kind": "ok", "payload": {}}) + "\n"
+                + "this-is-not-json\n"
+                + json.dumps({"offset": 2, "kind": "ok2", "payload": {}}) + "\n"
+            )
+            return httpx.Response(
+                200,
+                content=body,
+                headers={
+                    "content-type": "application/x-ndjson",
+                    "X-Next-Offset": "2",
+                },
+            )
+
+        client = _client_with_handler(_handler)
+        events, _ = await client.replay_events("job-abc", after_offset=0)
+        # Malformed line skipped; surviving offsets present.
+        assert [ev["offset"] for ev in events] == [1, 2]

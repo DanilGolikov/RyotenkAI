@@ -1,15 +1,27 @@
 """Loopback endpoints used by the trainer subprocess.
 
-The trainer subprocess (``python -m src.training.run_training``)
-runs inside the same container as the job server. It pushes
-structured progress events through a HuggingFace ``TrainerCallback``
-(:class:`RunnerEventCallback`, Phase 3) to:
+The trainer subprocess (``python -m ryotenkai_pod.trainer.run_training``)
+runs inside the same container as the job server. It pushes typed event
+envelopes through a HuggingFace ``TrainerCallback``
+(:class:`RunnerEventCallback`) to:
 
     POST http://127.0.0.1:8080/api/v1/internal/events
 
 The router lives behind the same ``API_V1_PREFIX`` as the public
 ``/jobs`` surface. Security relies on the uvicorn bind being
 ``127.0.0.1`` only — confirmed in ``docker/training/entrypoint.sh``.
+
+Phase 2 contract (ethereal-tumbling-patterson):
+
+* Request body is the **full envelope JSON** (per the shared event
+  taxonomy). The handler validates via
+  :data:`ryotenkai_shared.events.EVENT_ADAPTER`; ``ValidationError``
+  surfaces as HTTP 422 with the codec's diagnostic detail.
+* The handler delegates to :class:`EventBus.publish` so the offset is
+  assigned by the bus (R-05: per-source lock); journal append and
+  subscriber fan-out are downstream of that single call.
+* Response body :class:`EventResponse` carries the assigned offset so
+  the trainer-side callback can correlate.
 """
 
 from __future__ import annotations
@@ -17,12 +29,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Request
-
-from ryotenkai_shared.contracts.runner_api import EventResponse, InternalEventRequest
+from pydantic import ValidationError
 
 from ryotenkai_pod.runner.api.deps import get_bus, get_fsm, get_mlflow_relay
-from ryotenkai_shared.errors import LoopbackRequiredError, NoActiveJobError
+from ryotenkai_pod.runner.event_bus import envelope_to_wire
 from ryotenkai_pod.runner.mlflow_relay import MLFLOW_EVENT_KINDS
+from ryotenkai_shared.contracts.runner_api import EventResponse, InternalEventRequest
+from ryotenkai_shared.errors import (
+    JobSpecInvalidError,
+    LoopbackRequiredError,
+    NoActiveJobError,
+)
+from ryotenkai_shared.events import EVENT_ADAPTER, UnknownEvent
 
 if TYPE_CHECKING:
     from ryotenkai_pod.runner.event_bus import EventBus
@@ -32,28 +50,11 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/internal", tags=["internal"])
 
 
-# IPv4 loopback. Trusted clients reach the server via this address
-# (set by uvicorn ``--host 127.0.0.1`` in entrypoint.sh) — anyone
-# else either is on the same loopback (the trainer subprocess) or
-# is the SSH ``-L`` tunnel terminating at the loopback port from
-# the Mac side. The check below is belt-and-suspenders for the
-# unlikely case the server is misconfigured to bind 0.0.0.0.
-#
-# ``testclient`` is the synthetic peer ``fastapi.testclient.TestClient``
-# uses for in-process requests — never reachable from a real network,
-# so it's safe to whitelist for the test surface.
 _TRUSTED_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1", "testclient"})
 
 
 def _require_loopback(request: Request) -> None:
-    """Reject requests that didn't arrive over loopback.
-
-    FastAPI's ``request.client.host`` is the peer address — for
-    a uvicorn bound on 127.0.0.1 it is always 127.0.0.1 by
-    construction. The check is cheap and surfaces a misconfigured
-    bind during integration tests (where someone may inadvertently
-    set ``--host 0.0.0.0``).
-    """
+    """Reject requests that didn't arrive over loopback."""
     if request.client is None:
         raise LoopbackRequiredError(
             detail="missing client address (server bind misconfigured)",
@@ -69,14 +70,14 @@ def _require_loopback(request: Request) -> None:
     "/events",
     status_code=202,
     response_model=EventResponse,
-    summary="Trainer pushes a progress event (loopback only)",
+    summary="Trainer pushes a typed event envelope (loopback only)",
 )
 def push_event(
     body: InternalEventRequest,
     request: Request,
-    fsm: "JobLifecycleFSM" = Depends(get_fsm),
-    bus: "EventBus" = Depends(get_bus),
-    mlflow_relay: "MLflowRelay" = Depends(get_mlflow_relay),
+    fsm: JobLifecycleFSM = Depends(get_fsm),
+    bus: EventBus = Depends(get_bus),
+    mlflow_relay: MLflowRelay = Depends(get_mlflow_relay),
 ) -> EventResponse:
     _require_loopback(request)
 
@@ -90,18 +91,47 @@ def push_event(
             detail="trainer pushed event but FSM has no active job",
         )
 
-    event = bus.publish(body.kind, body.payload)
+    raw = body.root
+    try:
+        envelope = EVENT_ADAPTER.validate_python(raw)
+    except ValidationError as exc:
+        # Wire the codec's structured error through the typed-error
+        # contract so the runner emits problem+json (not bare 422).
+        raise JobSpecInvalidError(
+            detail=f"event envelope failed validation: {exc}",
+            cause=exc,
+        ) from exc
 
-    # MLflow relay (Phase 4.3) — forward MLflow-shaped events to the
-    # configured upstream when enabled. Disabled relay returns False
-    # and we move on. Non-blocking: ``submit`` is sync, work happens
-    # in the relay's worker task.
-    if body.kind in MLFLOW_EVENT_KINDS:
-        mlflow_relay.submit({"kind": body.kind, "payload": body.payload})
+    # Surface the legacy ``kind`` field on the response — it matches the
+    # envelope's typed discriminator. Falls back to the original_type
+    # for UnknownEvent so consumers can still see what the trainer
+    # tried to emit.
+    assigned_offset = bus.publish(envelope)
+    wire = envelope_to_wire(envelope.model_copy(update={"offset": assigned_offset}))
+
+    if isinstance(envelope, UnknownEvent):
+        kind = envelope.original_type
+        relay_payload = envelope.raw_payload
+    else:
+        kind = envelope.kind
+        payload_obj = getattr(envelope, "payload", None)
+        if hasattr(payload_obj, "model_dump"):
+            relay_payload = payload_obj.model_dump()
+        elif isinstance(payload_obj, dict):
+            relay_payload = dict(payload_obj)
+        else:
+            relay_payload = {}
+
+    # MLflow relay — forward MLflow-shaped events to the configured
+    # upstream when enabled. The relay still consumes the legacy
+    # ``{kind, payload}`` shape; we project the envelope's payload for
+    # it without re-validating.
+    if kind in MLFLOW_EVENT_KINDS:
+        mlflow_relay.submit({"kind": kind, "payload": relay_payload})
 
     return EventResponse(
-        offset=event.offset,
-        timestamp=event.timestamp,
-        kind=event.kind,
-        payload=dict(event.payload),
+        offset=assigned_offset,
+        timestamp=str(wire.get("timestamp", "")),
+        kind=kind,
+        payload=relay_payload,
     )

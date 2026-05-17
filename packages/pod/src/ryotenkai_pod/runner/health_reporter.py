@@ -27,6 +27,13 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.pod_health import (
+    GPUSnapshot,
+    HealthSnapshotEvent,
+    HealthSnapshotPayload,
+)
+
 from ryotenkai_pod.runner.idle_detector import default_gpu_metrics
 
 if TYPE_CHECKING:
@@ -191,4 +198,41 @@ class HealthReporter:
                 # Defensive — never crash the reporter loop on a
                 # transient psutil / nvidia-smi error.
                 continue
-            self._bus.publish("health_snapshot", dict(snapshot))
+            # Build a typed envelope when the snapshot reader supplied
+            # at least the required CPU / RAM fields. The legacy
+            # snapshot is a free-form dict (kept for the older WS
+            # consumer); we mirror its values in the typed payload so
+            # downstream typed consumers see the same numbers.
+            cpu_pct = float(snapshot.get("cpu_percent") or 0.0)
+            ram_used_gb = snapshot.get("ram_used_gb")
+            ram_bytes = int((ram_used_gb or 0.0) * (1024**3))
+            disk_free = int(snapshot.get("disk_free_bytes") or 0)
+            gpu_util = snapshot.get("gpu_util_percent")
+            gpu_mem = snapshot.get("gpu_memory_percent")
+            gpus: list[GPUSnapshot] = []
+            if gpu_util is not None or gpu_mem is not None:
+                gpus.append(
+                    GPUSnapshot(
+                        device="gpu0",
+                        utilization_pct=float(gpu_util or 0.0),
+                        memory_used_bytes=0,
+                        memory_total_bytes=0,
+                    ),
+                )
+            try:
+                self._bus.publish(
+                    HealthSnapshotEvent(
+                        source="pod://runner/health_reporter",
+                        run_id="unknown",
+                        offset=UNKNOWN_OFFSET,
+                        payload=HealthSnapshotPayload(
+                            cpu_pct=cpu_pct,
+                            ram_bytes=ram_bytes,
+                            gpu=gpus,
+                            disk_free_bytes=disk_free,
+                        ),
+                    ),
+                )
+            except Exception:
+                # Bus might be closed during shutdown — best-effort.
+                continue

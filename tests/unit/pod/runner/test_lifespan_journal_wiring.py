@@ -98,14 +98,21 @@ class TestPersistence:
     def test_published_events_visible_on_disk(
         self, runner_client, tmp_path: Path
     ) -> None:
+        from ryotenkai_pod.runner.event_bus import legacy_kind_for
+
         runner_client.get("/healthz")
         bus = runner_client.app.state.bus
-        bus.publish("test_event", {"value": 42})
+        bus.publish_legacy("test_event", {"value": 42})
 
         # Read back via the same journal.
         journal = runner_client.app.state.journal
-        records = list(journal.iter_records(since=0))
-        assert any(
-            r.kind == "test_event" and r.payload.get("value") == 42
-            for r in records
-        )
+        envelopes = list(journal.iter_envelopes())
+        matched = False
+        for ev in envelopes:
+            if legacy_kind_for(ev) != "test_event":
+                continue
+            raw = getattr(ev, "raw_payload", None)
+            if isinstance(raw, dict) and raw.get("value") == 42:
+                matched = True
+                break
+        assert matched

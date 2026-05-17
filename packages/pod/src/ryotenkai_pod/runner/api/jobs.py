@@ -39,6 +39,11 @@ from ryotenkai_shared.contracts.runner_api import (
     JobStopAcceptedResponse,
     JobSubmittedResponse,
 )
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.pod_lifecycle import (
+    PluginsUnpackedEvent,
+    PluginsUnpackedPayload,
+)
 
 from ryotenkai_pod.runner.api.deps import (
     get_bus,
@@ -163,12 +168,16 @@ async def submit_job(
         ) from exc
 
     bus.publish(
-        "plugins_unpacked",
-        {
-            "installed": list(unpack_result.installed),
-            "skipped": list(unpack_result.skipped),
-            "total_bytes": unpack_result.total_bytes,
-        },
+        PluginsUnpackedEvent(
+            source="pod://runner/plugin_unpacker",
+            run_id=spec.job_id,
+            offset=UNKNOWN_OFFSET,
+            payload=PluginsUnpackedPayload(
+                installed=sorted(unpack_result.installed),
+                skipped=sorted(unpack_result.skipped),
+                total_bytes=unpack_result.total_bytes,
+            ),
+        ),
     )
 
     # Atomic submit + spawn — the supervisor owns both the FSM

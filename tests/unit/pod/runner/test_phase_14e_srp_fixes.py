@@ -101,11 +101,20 @@ class TestRotationBinding:
             oldest_remaining_seq=0,
         )
 
-        # Newest event in the bus buffer is EVENTS_ROTATED with the payload.
+        # Phase 2: the rotation event is now a typed
+        # :class:`JournalRotatedEvent`; the legacy alias on the wire is
+        # still ``events_rotated``.
+        from ryotenkai_pod.runner.event_bus import legacy_kind_for
         latest = bus._buffer[-1]
-        assert latest.kind == EVENTS_ROTATED
-        assert latest.payload["from_seq"] == 1
-        assert latest.payload["to_seq"] == 2
+        assert legacy_kind_for(latest) == EVENTS_ROTATED
+        payload_obj = getattr(latest, "payload", None)
+        assert payload_obj is not None
+        if hasattr(payload_obj, "from_seq"):
+            assert payload_obj.from_seq == 1
+            assert payload_obj.to_seq == 2
+        else:
+            assert payload_obj["from_seq"] == 1
+            assert payload_obj["to_seq"] == 2
 
     def test_lifespan_uses_deferred_binding_pattern(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,

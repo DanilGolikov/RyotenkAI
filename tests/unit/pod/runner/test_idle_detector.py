@@ -32,8 +32,16 @@ from ryotenkai_pod.runner.event_bus import EventBus
 from ryotenkai_pod.runner.idle_detector import (
     DEFAULT_GPU_MEM_MAX_PCT,
     DEFAULT_GPU_UTIL_MAX,
+    DEFAULT_IDLE_THRESHOLD,
+    DEFAULT_MAX_LIFETIME,
+    ENV_IDLE_THRESHOLD_MINUTES,
+    ENV_MAX_LIFETIME_HOURS,
     GPUMetrics,
     IdleDetector,
+    resolve_thresholds_from_env,
+)
+from ryotenkai_shared.events.types.pod_health import (
+    HealthMaxLifetimeExceededEvent,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -194,7 +202,8 @@ class TestStartupGrace:
         await _run_until_ticks(tick_clock, target=5)
         await detector.stop()
         assert supervisor.stop_calls == []
-        kinds = [e.kind for e in list(bus._buffer)]
+        from ryotenkai_pod.runner.event_bus import legacy_kind_for
+        kinds = [legacy_kind_for(e) for e in list(bus._buffer)]
         assert "idle_detector_triggered" not in kinds
 
 
@@ -223,8 +232,11 @@ class TestGPUIdleTrigger:
         detector.start()
         await _run_until_ticks(tick_clock, target=12)
         await detector.stop()
+        from ryotenkai_pod.runner.event_bus import legacy_kind_for
         assert len(supervisor.stop_calls) == 1
-        assert "idle_detector_triggered" in [e.kind for e in list(bus._buffer)]
+        assert "idle_detector_triggered" in [
+            legacy_kind_for(e) for e in list(bus._buffer)
+        ]
 
     async def test_gpu_busy_no_trigger(
         self,
@@ -271,7 +283,8 @@ class TestGPUResumes:
         await _run_until_ticks(tick_clock, target=7)
         await detector.stop()
         assert supervisor.stop_calls == []
-        kinds = [e.kind for e in list(bus._buffer)]
+        from ryotenkai_pod.runner.event_bus import legacy_kind_for
+        kinds = [legacy_kind_for(e) for e in list(bus._buffer)]
         assert "gpu_idle_started" in kinds
         assert "gpu_idle_cleared" in kinds
 
@@ -299,11 +312,19 @@ class TestMaxLifetime:
         detector.start()
         await _run_until_ticks(tick_clock, target=5)
         await detector.stop()
+        from ryotenkai_pod.runner.event_bus import legacy_kind_for
         assert len(supervisor.stop_calls) == 1
         triggered = next(
-            e for e in list(bus._buffer) if e.kind == "idle_detector_triggered"
+            e for e in list(bus._buffer)
+            if legacy_kind_for(e) == "idle_detector_triggered"
         )
-        assert triggered.payload["reason"] == "max_lifetime"
+        # ``max_lifetime`` keeps the legacy free-form payload shape;
+        # the typed ``HealthIdleDetectedEvent`` covers the ``gpu_idle``
+        # case. UnknownEvent stores the original payload in
+        # ``raw_payload``.
+        raw = getattr(triggered, "raw_payload", None)
+        assert raw is not None
+        assert raw["reason"] == "max_lifetime"
 
 
 # ---------------------------------------------------------------------------
@@ -446,3 +467,112 @@ class TestThresholdParity:
     def test_gpu_thresholds_match_legacy(self) -> None:
         assert DEFAULT_GPU_UTIL_MAX == 5
         assert DEFAULT_GPU_MEM_MAX_PCT == 30
+
+
+# ---------------------------------------------------------------------------
+# E-СРЕД fix — env-driven thresholds + typed max-lifetime event
+# ---------------------------------------------------------------------------
+
+
+class TestEnvDrivenThresholds:
+    """Env-driven config bridging from Mac (control) to pod runtime."""
+
+    def test_defaults_when_env_empty(self) -> None:
+        max_s, idle_s = resolve_thresholds_from_env(env={})
+        assert max_s == DEFAULT_MAX_LIFETIME
+        assert idle_s == DEFAULT_IDLE_THRESHOLD
+
+    def test_env_overrides_max_lifetime(self) -> None:
+        max_s, idle_s = resolve_thresholds_from_env(
+            env={ENV_MAX_LIFETIME_HOURS: "12"},
+        )
+        # 12 hours → 12 * 3600 = 43200 seconds.
+        assert max_s == 43_200.0
+        # Idle threshold falls through to default.
+        assert idle_s == DEFAULT_IDLE_THRESHOLD
+
+    def test_env_overrides_idle_threshold(self) -> None:
+        max_s, idle_s = resolve_thresholds_from_env(
+            env={ENV_IDLE_THRESHOLD_MINUTES: "5"},
+        )
+        assert max_s == DEFAULT_MAX_LIFETIME
+        # 5 minutes → 300 seconds.
+        assert idle_s == 300.0
+
+    def test_env_both_overrides(self) -> None:
+        max_s, idle_s = resolve_thresholds_from_env(
+            env={
+                ENV_MAX_LIFETIME_HOURS: "1.5",
+                ENV_IDLE_THRESHOLD_MINUTES: "10",
+            },
+        )
+        assert max_s == 5400.0
+        assert idle_s == 600.0
+
+    @pytest.mark.parametrize("bad", ["", "not-a-float", "-1", "0"])
+    def test_bad_env_value_falls_back_to_default(self, bad: str) -> None:
+        max_s, _ = resolve_thresholds_from_env(
+            env={ENV_MAX_LIFETIME_HOURS: bad},
+        )
+        assert max_s == DEFAULT_MAX_LIFETIME
+
+
+class TestMaxLifetimeTypedEvent:
+    """Typed :class:`HealthMaxLifetimeExceededEvent` replaces the
+    legacy free-form payload for the ``max_lifetime`` reason."""
+
+    async def test_typed_event_emitted_on_max_lifetime_trigger(
+        self,
+        bus: EventBus,
+        supervisor: FakeSupervisor,
+        tick_clock: TickClock,
+    ) -> None:
+        detector = _build_detector(
+            bus, supervisor, tick_clock,
+            metrics=[(99, 99)],  # busy — irrelevant; max_lifetime fires first
+            startup_grace=10_000.0,
+            idle_threshold=10_000.0,
+            max_lifetime=3.0,
+            poll_interval=1.0,
+        )
+        detector.start()
+        await _run_until_ticks(tick_clock, target=5)
+        await detector.stop()
+
+        typed = [
+            e for e in list(bus._buffer)
+            if isinstance(e, HealthMaxLifetimeExceededEvent)
+        ]
+        assert len(typed) == 1, (
+            f"expected one HealthMaxLifetimeExceededEvent, "
+            f"got {[type(e).__name__ for e in bus._buffer]}"
+        )
+        evt = typed[0]
+        assert evt.payload.max_lifetime_s == 3.0
+        # actual_runtime_s should be at or above the cap.
+        assert evt.payload.actual_runtime_s >= 3.0
+        assert evt.severity == "warning"
+        # Wall-clock start was recorded at ``start()``.
+        assert evt.payload.started_at is not None
+
+    async def test_max_lifetime_constructor_param_still_honoured(
+        self,
+        bus: EventBus,
+        supervisor: FakeSupervisor,
+        tick_clock: TickClock,
+    ) -> None:
+        # Belt-and-suspenders: the constructor param has worked since
+        # Phase 4.1; pin it to guard against accidental regressions
+        # introduced alongside the env-driven helper.
+        detector = _build_detector(
+            bus, supervisor, tick_clock,
+            metrics=[(99, 99)],
+            startup_grace=10_000.0,
+            idle_threshold=10_000.0,
+            max_lifetime=2.0,
+            poll_interval=1.0,
+        )
+        detector.start()
+        await _run_until_ticks(tick_clock, target=4)
+        await detector.stop()
+        assert len(supervisor.stop_calls) == 1

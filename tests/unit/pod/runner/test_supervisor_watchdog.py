@@ -109,18 +109,27 @@ def _py_immediate_exit(code: int = 0) -> list[str]:
 
 
 def _find_trainer_exited(bus: EventBus) -> dict | None:
-    """Return the most recent ``trainer_exited`` event's payload."""
+    """Return the most recent ``trainer_exited`` event's payload.
+
+    Phase 2: the supervisor publishes ``trainer_exited`` via the legacy
+    shim (it carries a free-form payload not yet typed). The legacy
+    payload lives on the :class:`UnknownEvent`'s ``raw_payload``.
+    """
     for ev in reversed(list(bus._buffer)):  # type: ignore[attr-defined]
-        if ev.kind == "trainer_exited":
-            return dict(ev.payload)
+        original = getattr(ev, "original_type", None)
+        if original == "trainer_exited":
+            raw = getattr(ev, "raw_payload", None)
+            return dict(raw) if isinstance(raw, dict) else None
     return None
 
 
 def _find_watchdog_event(bus: EventBus) -> dict | None:
     """Return the ``watchdog_timeout`` event payload if any."""
     for ev in list(bus._buffer):  # type: ignore[attr-defined]
-        if ev.kind == "watchdog_timeout":
-            return dict(ev.payload)
+        original = getattr(ev, "original_type", None)
+        if original == "watchdog_timeout":
+            raw = getattr(ev, "raw_payload", None)
+            return dict(raw) if isinstance(raw, dict) else None
     return None
 
 

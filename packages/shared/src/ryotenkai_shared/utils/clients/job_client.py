@@ -635,6 +635,90 @@ class JobClient:
 
         return ResourceSnapshot.model_validate(response.json())
 
+    # --- HTTP event replay (cursor-paginated NDJSON fallback) -------------
+
+    async def replay_events(
+        self,
+        job_id: str,
+        *,
+        after_offset: int,
+        limit: int = 10_000,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """``GET /api/v1/jobs/{id}/events/replay`` — disk-backed replay.
+
+        Used by the control-side monitor when WS reconnect raises
+        :class:`ReplayTruncatedError` (close code 4410: pod journal
+        rolled past the requested ``since``). The pod's on-disk
+        journal still has the events, so we paginate through them via
+        this endpoint rather than dropping the timeline and snapping
+        to a status snapshot.
+
+        Returns:
+            Tuple of ``(events, next_offset)`` where ``events`` is the
+            decoded NDJSON envelopes (wire-shape dicts, same as
+            :meth:`subscribe_events`) and ``next_offset`` is the value
+            from the ``X-Next-Offset`` response header — the cursor to
+            pass on the next page. When pagination is exhausted the
+            endpoint returns ``after_offset`` unchanged.
+
+        Args:
+            job_id: which job to replay.
+            after_offset: exclusive lower bound; the response yields
+                events with ``offset > after_offset``.
+            limit: server-side cap; defaults to the maximum the
+                runner accepts (10 000).
+
+        Raises:
+            JobNotFoundError: 404 (job no longer the active one).
+            RyotenkAIError: any other typed problem+json response.
+            JobClientError: transport failure.
+        """
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        try:
+            response = await self._client.get(
+                f"/api/v1/jobs/{job_id}/events/replay",
+                params={"after_offset": after_offset, "limit": limit},
+            )
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"replay_events transport error: {exc!r}",
+            ) from exc
+
+        if response.status_code == 404:
+            problem = parse_problem_details(response)
+            raise JobNotFoundError(
+                f"unknown job_id: {job_id!r}",
+            ) from problem
+        if not response.is_success:
+            raise parse_problem_details(response)
+
+        # Body is NDJSON (one envelope per line, possibly empty).
+        events: list[dict[str, Any]] = []
+        body = response.text
+        for line in body.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                events.append(json.loads(stripped))
+            except json.JSONDecodeError:
+                # Skip a malformed line rather than failing the whole
+                # page — mirrors the WS path's per-frame tolerance.
+                continue
+
+        # ``X-Next-Offset`` is always present (set by the runner to
+        # ``after_offset`` on empty responses). Be defensive in case
+        # of a future server change.
+        try:
+            next_offset = int(response.headers.get("X-Next-Offset", str(after_offset)))
+        except (TypeError, ValueError):
+            next_offset = after_offset
+
+        return events, next_offset
+
     # --- WebSocket event stream -------------------------------------------
 
     async def subscribe_events(

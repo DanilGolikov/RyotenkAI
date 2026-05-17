@@ -155,9 +155,10 @@ EVENTS_GC_RAN = "events_gc_ran"
 
 #: Phase 12.C — :class:`ModelRetriever` finished its
 #: ``metrics_buffer.jsonl`` retrieval + replay attempt (Phase 12.A.1).
-#: Mirrors :class:`ModelRetrieverEventCallbacks.on_metrics_buffer_retrieved`
-#: as a structured bus event so dashboards can track replay outcomes
-#: per attempt. Carries:
+#: Originally mirrored the legacy
+#: ``ModelRetrieverEventCallbacks.on_metrics_buffer_retrieved`` callback
+#: (removed in Phase 4 event-system unification); the bus kind name is
+#: preserved so existing subscribers keep working. Carries:
 #:   * ``replayed`` — int, count of metrics shipped to MLflow.
 #:   * ``line_count`` — int, lines in the retrieved buffer file.
 #:   * ``size_bytes`` — int, remote file size.

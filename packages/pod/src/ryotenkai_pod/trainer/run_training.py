@@ -41,19 +41,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ryotenkai_pod.trainer.constants import (
-    CATEGORY_TRAINING,
     EXIT_KEYBOARD_INTERRUPT,
-    SOURCE_RUN_TRAINING,
     TRUNCATE_ERROR_MSG,
     TRUNCATE_SHA_DISPLAY,
 )
-from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 from ryotenkai_pod.trainer.container import TrainingContainer
+from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
+from ryotenkai_shared.config.loader import load_pipeline_config
 from ryotenkai_shared.errors import RyotenkAIError
 from ryotenkai_shared.utils.environment import EnvironmentReporter
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.run_naming import generate_run_name
-from ryotenkai_shared.config.loader import load_pipeline_config
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig
@@ -87,6 +85,58 @@ def _extract_model_size(model_name: str) -> str:
 
     logger.warning(f"Could not extract model size from model name: {model_name}")
     return "unknown"
+
+
+def _emit_training_failed(
+    *,
+    exc: BaseException,
+    step: int | None = None,
+    error_type: str | None = None,
+) -> None:
+    """Best-effort fan-out of a :class:`TrainingFailedEvent` to the runner.
+
+    Creates a short-lived :class:`RunnerEventCallback` purely to push a
+    typed ``training.failed`` envelope onto the runner bus. The callback
+    no-ops when ``RYOTENKAI_RUNNER_URL`` is unset (standalone trainer
+    runs), so this helper is safe to call unconditionally.
+
+    Why a fresh instance rather than reaching into the HF Trainer's
+    callback list: the in-trainer callback may be inaccessible from
+    ``run_training.py`` (the orchestrator owns it), and constructing
+    another one is cheap — both go through the same loopback HTTP
+    channel to the in-pod runner which is the SSOT bus. The runner's
+    handler is the deduplication boundary, not this caller.
+
+    All disk / network errors are swallowed: a broken event-push must
+    not mask the original training failure.
+    """
+    try:
+        from ryotenkai_pod.trainer.callbacks.runner_event_callback import (
+            RunnerEventCallback,
+        )
+
+        cb = RunnerEventCallback()
+        try:
+            cb.emit_training_failed(
+                exc=exc,
+                step=step,
+                error_type=error_type,
+            )
+        finally:
+            # Drain whatever was enqueued, then signal the worker to
+            # stop and close the httpx client. The 5s deadline is
+            # generous for a single envelope on a loopback HTTP path.
+            with contextlib.suppress(Exception):
+                cb._drain_with_deadline(deadline_s=5.0)
+            cb._stop_evt.set()
+            if cb._worker is not None:
+                with contextlib.suppress(Exception):
+                    cb._worker.join(timeout=1.0)
+            cb._close_client()
+    except Exception as emit_exc:  # pragma: no cover — defensive
+        logger.warning(
+            f"[RUN_TRAINING:FAILED-EVENT] emit_training_failed suppressed: {emit_exc}",
+        )
 
 
 def _setup_mlflow(config: PipelineConfig) -> MLflowManager | None:
@@ -156,6 +206,14 @@ def run_training(
     mlflow_run_context = None
     memory_manager = None  # For finally block memory snapshot
     training_success = False
+    # Phase 3 (pre-Phase-3 fix): ensures the typed
+    # ``TrainingFailedEvent`` is emitted at most once per ``run_training``
+    # invocation even though the inner ``except RyotenkAIError`` rewraps
+    # to ``RuntimeError`` and is then re-caught by the outer
+    # ``except Exception``. Phase 6.b retired the MLflow ``log_event_error``
+    # parallel path; the typed envelope on the bus is now the SSOT, and
+    # this flag remains for deduplication of that single source.
+    training_failed_emitted = False
 
     try:
         logger.info("Starting LLM Training")
@@ -239,22 +297,11 @@ def run_training(
                 )
                 logger.info(f"📌 Docker image SHA: {docker_image_sha[:TRUNCATE_SHA_DISPLAY]}...")
 
-            # Log initial event
-            mlflow_mgr.log_event_start(
-                "Training pipeline started",
-                category=CATEGORY_TRAINING,
-                source=SOURCE_RUN_TRAINING,
-            )
-
-            # Log config info as event
-            mlflow_mgr.log_event_info(
-                f"Config loaded: {config.model.name}",
-                category=CATEGORY_TRAINING,
-                source=SOURCE_RUN_TRAINING,
-                model=config.model.name,
-                training_type=config.training.adapter.kind,
-                strategies=[s.strategy_type for s in strategies],
-            )
+            # Phase 6.b: parallel MLflowEventLog log_event_* calls
+            # removed. Pipeline-start / config-loaded events flow
+            # through the typed journal (control-side
+            # ``events.jsonl``) emitted by the control plane's
+            # ``RunStartedEvent`` and friends.
 
             # Log training config
             mlflow_mgr.log_training_config(config)
@@ -388,16 +435,10 @@ def run_training(
                 }
             )
 
-        if mlflow_mgr and mlflow_mgr.is_active:
-            mlflow_mgr.log_event_info(
-                f"Model loaded: {trainable_params:,} trainable params ({model_load_duration:.1f}s)",
-                category="training",
-                source="run_training",
-                model_loading_time_seconds=model_load_duration,
-                total_parameters=total_params,
-                trainable_parameters=trainable_params,
-                trainable_percent=trainable_percent,
-            )
+        # Phase 6.b: model-loaded log_event_info call removed.
+        # Model-load telemetry is logged via ``mlflow_mgr.log_params``
+        # above; the typed journal captures coarse-grained pipeline
+        # progression via the control-side stage emitter.
 
         # =====================================================================
         # 8. CREATE ORCHESTRATOR (with MLflow manager)
@@ -447,14 +488,21 @@ def run_training(
             error_msg = exc.detail or str(exc)
             logger.error(f"Training failed: {error_msg}")
 
+            # Phase 3 (pre-Phase-3 fix): emit a typed
+            # ``TrainingFailedEvent`` BEFORE the MLflow event-error
+            # call so control-side and SSE consumers see the typed
+            # envelope on the bus. The MLflow call below is the
+            # MLflow-artefact-archival parallel path (used by report
+            # generation); both must run.
+            _emit_training_failed(exc=exc)
+            training_failed_emitted = True
+
             if mlflow_mgr and mlflow_mgr.is_active:
                 mlflow_mgr.set_tag("status", "failed")
                 mlflow_mgr.log_params({"error": str(error_msg)[:TRUNCATE_ERROR_MSG]})
-                mlflow_mgr.log_event_error(
-                    f"Training failed: {error_msg}",
-                    category=CATEGORY_TRAINING,
-                    source=SOURCE_RUN_TRAINING,
-                )
+                # Phase 6.b: parallel log_event_error call removed —
+                # ``_emit_training_failed`` above emitted the typed
+                # ``TrainingFailedEvent`` which is the SSOT.
 
             # Phase 6.3b: notifier.notify_failed call removed. The
             # MLflow event above + the RunnerEventCallback's loopback
@@ -480,12 +528,9 @@ def run_training(
         if mlflow_mgr and mlflow_mgr.is_active:
             mlflow_mgr.set_tag("status", "completed")
             mlflow_mgr.log_params({"output_path": str(output_path)})
-            mlflow_mgr.log_event_complete(
-                "Training completed successfully",
-                category="training",
-                source="run_training",
-                output_path=str(output_path),
-            )
+            # Phase 6.b: parallel log_event_complete call removed —
+            # the typed ``TrainingCompletedEvent`` emitted by the
+            # RunnerEventCallback on HF ``on_train_end`` is the SSOT.
 
             model_name = config.model.name.split("/")[-1].replace(".", "-").lower()
             mlflow_mgr.register_model(
@@ -512,14 +557,24 @@ def run_training(
     except Exception as e:
         logger.exception(f"Unexpected error during training: {e}")
 
-        # Log error event to MLflow
-        if mlflow_mgr and mlflow_mgr.is_active:
-            mlflow_mgr.log_event_error(
-                f"Training failed: {e!s}",
-                category="training",
-                source="run_training",
-                error_type=type(e).__name__,
-            )
+        # Phase 3 / Phase 6.b: emit typed ``TrainingFailedEvent``
+        # for unexpected exceptions (anything that wasn't already
+        # caught as ``RyotenkAIError`` above — typically pre-loop
+        # failures like config / model load, or a non-typed crash
+        # inside the orchestrator). The typed envelope on the bus
+        # is the SSOT (Phase 6.b removed the parallel MLflow
+        # ``log_event_error`` call).
+        #
+        # Skip if the inner ``RyotenkAIError`` branch already emitted —
+        # that branch rewraps to ``RuntimeError`` which is then caught
+        # here, so without the flag we would emit twice.
+        if not training_failed_emitted:
+            _emit_training_failed(exc=e)
+            training_failed_emitted = True
+
+        # Phase 6.b: parallel log_event_error call removed — the
+        # ``_emit_training_failed`` helper above emits the typed
+        # ``TrainingFailedEvent`` which is the SSOT.
 
         # Phase 6.3b: notifier.notify_failed for unexpected errors
         # removed. The MLflow event above + the RunnerEventCallback

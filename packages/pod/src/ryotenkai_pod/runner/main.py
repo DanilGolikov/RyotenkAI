@@ -45,7 +45,11 @@ from ryotenkai_pod.runner.api import logs as logs_api
 from ryotenkai_pod.runner.api import resources as resources_api
 from ryotenkai_pod.runner.api import runtime as runtime_api
 from ryotenkai_shared.api import EXCEPTION_HANDLERS, RequestIDMiddleware
-from ryotenkai_shared.observability.cancellation_telemetry import EVENTS_DISK_PRESSURE
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.pod_journal import (
+    JournalDiskPressureEvent,
+    JournalDiskPressurePayload,
+)
 from ryotenkai_pod.runner.event_bus import EventBus
 from ryotenkai_pod.runner.event_journal import (
     DEFAULT_FILE_SIZE_CAP,
@@ -239,11 +243,16 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         )
 
         async def _terminal_hook(terminal_state: str) -> None:
+            # Bridge the pod-terminator's ``(kind, payload)`` callable
+            # to the new bus surface. ``publish_legacy`` wraps the call
+            # into an :class:`UnknownEvent` envelope so the on-wire
+            # format stays uniform with the typed events the rest of
+            # the runner emits.
             await run_terminal_hook(
                 pod_terminator,
                 terminal_state=terminal_state,
                 heartbeat=heartbeat,
-                bus_publish=bus.publish,
+                bus_publish=bus.publish_legacy,
             )
 
         supervisor = supervisor_factory(
@@ -361,12 +370,20 @@ async def _periodic_journal_health_check(
         if total > threshold_bytes:
             if not last_alerted:
                 try:
-                    bus.publish(EVENTS_DISK_PRESSURE, {
-                        "total_bytes": total,
-                        "file_count": files,
-                        "threshold_bytes": threshold_bytes,
-                        "cap_bytes": cap_bytes,
-                    })
+                    bus.publish(
+                        JournalDiskPressureEvent(
+                            source="pod://runner/journal",
+                            run_id="unknown",
+                            offset=UNKNOWN_OFFSET,
+                            payload=JournalDiskPressurePayload(
+                                error_type="footprint",
+                                total_bytes=total,
+                                file_count=files,
+                                threshold_bytes=threshold_bytes,
+                                cap_bytes=cap_bytes,
+                            ),
+                        ),
+                    )
                 except Exception:  # noqa: BLE001 — defensive
                     pass
                 last_alerted = True

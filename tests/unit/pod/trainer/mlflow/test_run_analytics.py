@@ -9,18 +9,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ryotenkai_pod.trainer.mlflow.event_log import MLflowEventLog
 from ryotenkai_pod.trainer.mlflow.run_analytics import MLflowRunAnalytics
 
 
 def _make_analytics(
     experiment_name: str | None = "test-experiment",
-) -> tuple[MLflowRunAnalytics, MagicMock, MagicMock, MLflowEventLog]:
+) -> tuple[MLflowRunAnalytics, MagicMock, MagicMock]:
     gateway = MagicMock()
     mlflow = MagicMock()
-    event_log = MLflowEventLog()
-    analytics = MLflowRunAnalytics(gateway, mlflow, experiment_name=experiment_name, event_log=event_log)
-    return analytics, gateway, mlflow, event_log
+    analytics = MLflowRunAnalytics(gateway, mlflow, experiment_name=experiment_name)
+    return analytics, gateway, mlflow
 
 
 def _make_df_mock(records: list[dict]) -> MagicMock:
@@ -36,7 +34,7 @@ def _make_df_mock(records: list[dict]) -> MagicMock:
 
 class TestMLflowRunAnalyticsGetBestRun:
     def test_returns_best_run(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         run_data = {"run_id": "abc123", "metrics.eval_loss": 0.5}
         df = _make_df_mock([run_data])
         mlflow.search_runs.return_value = df
@@ -46,13 +44,13 @@ class TestMLflowRunAnalyticsGetBestRun:
         assert result["run_id"] == "abc123"
 
     def test_returns_none_when_no_experiment(self):
-        analytics, _, mlflow, _ = _make_analytics(experiment_name=None)
+        analytics, _, mlflow = _make_analytics(experiment_name=None)
         result = analytics.get_best_run()
         assert result is None
         mlflow.search_runs.assert_not_called()
 
     def test_returns_none_on_empty_dataframe(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         df = MagicMock()
         # simulate empty DataFrame
         type(df).empty = property(lambda self: True)
@@ -72,7 +70,7 @@ class TestMLflowRunAnalyticsGetBestRun:
         assert analytics.get_best_run() is None
 
     def test_max_mode_uses_desc_order(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         df = _make_df_mock([{"run_id": "abc"}])
         mlflow.search_runs.return_value = df
 
@@ -81,7 +79,7 @@ class TestMLflowRunAnalyticsGetBestRun:
         assert "DESC" in str(call_kwargs.get("order_by", ""))
 
     def test_min_mode_uses_asc_order(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         df = _make_df_mock([{"run_id": "abc"}])
         mlflow.search_runs.return_value = df
 
@@ -90,7 +88,7 @@ class TestMLflowRunAnalyticsGetBestRun:
         assert "ASC" in str(call_kwargs.get("order_by", ""))
 
     def test_filter_string_passed_to_search(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         df = _make_df_mock([])
         mlflow.search_runs.return_value = df
 
@@ -99,14 +97,14 @@ class TestMLflowRunAnalyticsGetBestRun:
         assert call_kwargs.get("filter_string") == "status = 'FINISHED'"
 
     def test_exception_returns_none(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         mlflow.search_runs.side_effect = Exception("connection error")
         assert analytics.get_best_run() is None
 
 
 class TestMLflowRunAnalyticsCompareRuns:
     def test_compare_runs_returns_list(self):
-        analytics, gateway, mlflow, _ = _make_analytics()
+        analytics, gateway, mlflow = _make_analytics()
         mock_client = MagicMock()
         gateway.get_client.return_value = mock_client
 
@@ -125,7 +123,7 @@ class TestMLflowRunAnalyticsCompareRuns:
         assert result[0]["run_id"] == "run-abc"
 
     def test_compare_runs_filter_metrics(self):
-        analytics, gateway, mlflow, _ = _make_analytics()
+        analytics, gateway, mlflow = _make_analytics()
         mock_client = MagicMock()
         gateway.get_client.return_value = mock_client
         run_mock = MagicMock()
@@ -143,7 +141,7 @@ class TestMLflowRunAnalyticsCompareRuns:
         assert "train_loss" not in result[0]["metrics"]
 
     def test_compare_runs_handles_failed_run(self):
-        analytics, gateway, mlflow, _ = _make_analytics()
+        analytics, gateway, mlflow = _make_analytics()
         mock_client = MagicMock()
         gateway.get_client.return_value = mock_client
         mock_client.get_run.side_effect = Exception("run not found")
@@ -159,13 +157,13 @@ class TestMLflowRunAnalyticsCompareRuns:
 
 class TestMLflowRunAnalyticsSearchRuns:
     def test_search_runs_no_experiment_returns_empty(self):
-        analytics, _, mlflow, _ = _make_analytics(experiment_name=None)
+        analytics, _, mlflow = _make_analytics(experiment_name=None)
         result = analytics.search_runs()
         assert result == []
         mlflow.search_runs.assert_not_called()
 
     def test_search_runs_passes_filter(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         df = _make_df_mock([])
         mlflow.search_runs.return_value = df
         analytics.search_runs(filter_string="status='FINISHED'", max_results=10)
@@ -176,7 +174,7 @@ class TestMLflowRunAnalyticsSearchRuns:
 
 class TestMLflowRunAnalyticsMetricsHistory:
     def test_get_run_metrics_history_success(self):
-        analytics, gateway, mlflow, _ = _make_analytics()
+        analytics, gateway, mlflow = _make_analytics()
         mock_client = MagicMock()
         gateway.get_client.return_value = mock_client
         m1 = MagicMock(step=0, timestamp=1000, value=0.9)
@@ -189,7 +187,7 @@ class TestMLflowRunAnalyticsMetricsHistory:
         assert history[1]["value"] == 0.8
 
     def test_get_run_metrics_history_exception(self):
-        analytics, gateway, _, _ = _make_analytics()
+        analytics, gateway, _ = _make_analytics()
         gateway.get_client.side_effect = Exception("error")
         result = analytics.get_run_metrics_history("run-abc", "train_loss")
         assert result == []
@@ -197,7 +195,7 @@ class TestMLflowRunAnalyticsMetricsHistory:
 
 class TestMLflowRunAnalyticsGetRunData:
     def test_get_run_data_returns_dict(self):
-        analytics, gateway, mlflow, _ = _make_analytics()
+        analytics, gateway, mlflow = _make_analytics()
         mock_client = MagicMock()
         gateway.get_client.return_value = mock_client
         run = MagicMock()
@@ -216,7 +214,7 @@ class TestMLflowRunAnalyticsGetRunData:
         assert result["metrics"]["eval_loss"] == 0.3
 
     def test_get_run_data_no_run_id(self):
-        analytics, _, _, _ = _make_analytics()
+        analytics, _, _ = _make_analytics()
         assert analytics.get_run_data("") is None
 
     def test_get_run_data_no_mlflow(self):
@@ -227,33 +225,27 @@ class TestMLflowRunAnalyticsGetRunData:
 
 class TestMLflowRunAnalyticsSummaryMarkdown:
     def test_generate_summary_markdown_no_run_id(self):
-        analytics, _, _, event_log = _make_analytics()
+        analytics, _, _ = _make_analytics()
         md = analytics.generate_summary_markdown(run_id=None)
         assert "# Training Summary Report" in md
         assert "N/A" in md
 
-    def test_generate_summary_markdown_includes_events(self):
-        analytics, _, _, event_log = _make_analytics()
-        event_log.log_event("start", "Training started", category="training")
+    def test_generate_summary_markdown_includes_events_section(self):
+        """Phase 6.b: MLflowEventLog is a no-op shim, so the rendered
+        summary contains the stub events-timeline section but never
+        the legacy event messages.
+        """
+        analytics, _, _ = _make_analytics()
 
         # mock get_run_data to return None (no run data)
         analytics._gateway.get_client.side_effect = Exception("no run")
         md = analytics.generate_summary_markdown(run_id=None)
-        # event log section should be present
+        # event-log section header is still rendered
         assert "Events Timeline" in md
-        assert "Training started" in md
-
-    def test_generate_summary_markdown_without_event_log(self):
-        gateway = MagicMock()
-        mlflow = MagicMock()
-        analytics = MLflowRunAnalytics(gateway, mlflow, event_log=None)
-        md = analytics.generate_summary_markdown(run_id=None)
-        assert "Event log not available" in md
-
 
 class TestMLflowRunAnalyticsGetChildRuns:
     def test_get_child_runs_success(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         df = _make_df_mock([{"run_id": "child-1"}, {"run_id": "child-2"}])
         mlflow.search_runs.return_value = df
 
@@ -261,13 +253,13 @@ class TestMLflowRunAnalyticsGetChildRuns:
         mlflow.search_runs.assert_called_once()
 
     def test_get_child_runs_no_parent_id(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         result = analytics.get_child_runs("")
         assert result == []
         mlflow.search_runs.assert_not_called()
 
     def test_get_child_runs_exception(self):
-        analytics, _, mlflow, _ = _make_analytics()
+        analytics, _, mlflow = _make_analytics()
         mlflow.search_runs.side_effect = Exception("error")
         result = analytics.get_child_runs("parent-run")
         assert result == []

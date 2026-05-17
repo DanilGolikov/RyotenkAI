@@ -401,13 +401,25 @@ def test_create_mlflow_dataset_from_pandas(monkeypatch: pytest.MonkeyPatch) -> N
     assert created == {"rows": 2, "source": "local://x", "name": "ds", "targets": "y"}
 
 
-def test_event_logging_sets_has_errors_and_severity() -> None:
+def test_event_logging_methods_removed_in_phase_7() -> None:
+    """Phase 7: ``log_event_*`` / ``log_events_artifact`` / ``get_events``
+    methods were removed from MLflowManager — the typed event journal is
+    the single source of truth. This test asserts none of those methods
+    are present on the public surface.
+    """
     mgr = MLflowManager(_mk_cfg())
-    ev = mgr.log_event_error("boom", category="system", source="MLflowManager", code=1)
-    assert ev["event_type"] == "error"
-    assert ev["severity"] == "ERROR"
-    assert mgr.get_events(category="system")
-    assert any(e["event_type"] == "error" for e in mgr.get_events())
+    for attr in (
+        "log_event",
+        "log_event_start",
+        "log_event_complete",
+        "log_event_error",
+        "log_event_warning",
+        "log_event_info",
+        "log_event_checkpoint",
+        "log_events_artifact",
+        "get_events",
+    ):
+        assert not hasattr(mgr, attr), f"Phase 7: {attr!r} should be gone"
 
 
 def test_log_dataset_config_single_dataset(monkeypatch: pytest.MonkeyPatch) -> None:

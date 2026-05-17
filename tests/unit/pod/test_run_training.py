@@ -276,6 +276,156 @@ class TestRunTrainingFlow:
         assert run_ctx.entered is True
         assert run_ctx.exited is True
 
+    def test_run_training_failure_emits_typed_training_failed_event(
+        self, monkeypatch, tmp_path,
+    ):
+        """RyotenkAIError failure path must emit a typed TrainingFailedEvent.
+
+        Phase 6.b: the typed envelope on the bus is the SSOT. The
+        legacy MLflow ``log_event_error`` parallel call has been
+        retired, so we no longer assert on it.
+        """
+        import importlib
+
+        rt = importlib.import_module("ryotenkai_pod.trainer.run_training")
+
+        strategies = [MagicMock(strategy_type="sft")]
+        cfg = MagicMock()
+        cfg.model.name = "Qwen/Qwen2.5-0.5B-Instruct"
+        cfg.training.type = "qlora"
+        cfg.training.get_strategy_chain.return_value = strategies
+        cfg.training.get_effective_load_in_4bit.return_value = True
+        cfg.training.is_multi_phase.return_value = False
+
+        mlflow_mgr = MagicMock()
+        mlflow_mgr.is_active = True
+        mlflow_mgr._mlflow_config = MagicMock(
+            system_metrics_callback_enabled=True,
+        )
+        run_ctx = _RunCtx()
+        mlflow_mgr.start_run.return_value = run_ctx
+
+        env_reporter = MagicMock()
+        env_reporter.snapshot.to_dict.return_value = {"os": "x"}
+
+        memory_manager = MagicMock()
+        memory_manager.gpu_info = None
+        memory_manager.preset = None
+        memory_manager.get_memory_stats.return_value = None
+
+        orchestrator = MagicMock()
+        orchestrator.buffer = None
+        orchestrator.run_chain.side_effect = TrainingFailedError(detail="kaboom")
+
+        container = MagicMock()
+        container.create_memory_manager_with_callbacks.return_value = memory_manager
+        container.load_model_and_tokenizer.return_value = (_ModelStub(), object())
+        container.create_orchestrator.return_value = orchestrator
+
+        monkeypatch.setattr(rt, "load_pipeline_config", lambda p: cfg)
+        monkeypatch.setattr(rt, "_setup_mlflow", lambda c: mlflow_mgr)
+        monkeypatch.setattr(
+            rt.EnvironmentReporter,
+            "collect",
+            classmethod(lambda cls=None: env_reporter),
+        )
+
+        # Patch ``_emit_training_failed`` so we can assert it was called
+        # exactly once for this failure even though the inner
+        # ``RyotenkAIError`` rewraps to ``RuntimeError`` (which the
+        # outer ``except Exception`` would otherwise catch and emit
+        # again).
+        emit_spy = MagicMock()
+        monkeypatch.setattr(rt, "_emit_training_failed", emit_spy)
+
+        with pytest.raises(RuntimeError, match="Training failed: kaboom"):
+            _ = rt.run_training(
+                str(tmp_path / "cfg.yaml"),
+                resume=False,
+                run_id="run_x",
+                container=container,
+            )
+
+        # Typed event emitted exactly once with the original typed
+        # exception (not the rewrapped RuntimeError).
+        assert emit_spy.call_count == 1
+        call_kwargs = emit_spy.call_args.kwargs
+        assert isinstance(call_kwargs["exc"], TrainingFailedError)
+
+        # Phase 6.b: MLflow log_event_error parallel archival path
+        # was retired — no longer asserted. The MLflow run must still
+        # end with FAILED status (set_tag + end_run side effects).
+        mlflow_mgr.end_run.assert_called_once_with(status="FAILED")
+
+    def test_run_training_unexpected_exception_emits_event(
+        self, monkeypatch, tmp_path,
+    ):
+        """Unexpected (non-typed) exception path also emits the typed event.
+
+        Covers crashes outside ``orchestrator.run_chain`` — e.g. model
+        load failure — that arrive at the outer ``except Exception``
+        without passing through the inner ``RyotenkAIError`` branch.
+        """
+        import importlib
+
+        rt = importlib.import_module("ryotenkai_pod.trainer.run_training")
+
+        strategies = [MagicMock(strategy_type="sft")]
+        cfg = MagicMock()
+        cfg.model.name = "Qwen/Qwen2.5-0.5B-Instruct"
+        cfg.training.type = "qlora"
+        cfg.training.get_strategy_chain.return_value = strategies
+        cfg.training.get_effective_load_in_4bit.return_value = True
+        cfg.training.is_multi_phase.return_value = False
+
+        mlflow_mgr = MagicMock()
+        mlflow_mgr.is_active = True
+        mlflow_mgr._mlflow_config = MagicMock(
+            system_metrics_callback_enabled=True,
+        )
+        mlflow_mgr.start_run.return_value = _RunCtx()
+
+        env_reporter = MagicMock()
+        env_reporter.snapshot.to_dict.return_value = {"os": "x"}
+
+        memory_manager = MagicMock()
+        memory_manager.gpu_info = None
+        memory_manager.preset = None
+        memory_manager.get_memory_stats.return_value = None
+
+        container = MagicMock()
+        container.create_memory_manager_with_callbacks.return_value = memory_manager
+        # Simulate model load crash — pre-orchestrator failure.
+        container.load_model_and_tokenizer.side_effect = RuntimeError(
+            "model load failed",
+        )
+
+        monkeypatch.setattr(rt, "load_pipeline_config", lambda p: cfg)
+        monkeypatch.setattr(rt, "_setup_mlflow", lambda c: mlflow_mgr)
+        monkeypatch.setattr(
+            rt.EnvironmentReporter,
+            "collect",
+            classmethod(lambda cls=None: env_reporter),
+        )
+
+        emit_spy = MagicMock()
+        monkeypatch.setattr(rt, "_emit_training_failed", emit_spy)
+
+        with pytest.raises(RuntimeError, match="model load failed"):
+            _ = rt.run_training(
+                str(tmp_path / "cfg.yaml"),
+                resume=False,
+                run_id="run_x",
+                container=container,
+            )
+
+        # Exactly one typed emission — the model-load RuntimeError
+        # bubbles straight to the outer ``except Exception``.
+        assert emit_spy.call_count == 1
+        emit_kwargs = emit_spy.call_args.kwargs
+        assert isinstance(emit_kwargs["exc"], RuntimeError)
+        assert "model load failed" in str(emit_kwargs["exc"])
+
     def test_run_training_failure_notifies_once(self, monkeypatch, tmp_path):
         import importlib
 

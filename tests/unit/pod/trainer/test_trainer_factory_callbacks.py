@@ -9,7 +9,6 @@ from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 import ryotenkai_pod.trainer.trainers.factory as tf
 from ryotenkai_pod.trainer.callbacks.system_metrics_callback import SystemMetricsCallback
-from ryotenkai_pod.trainer.callbacks.training_events_callback import TrainingEventsCallback
 from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
 from ryotenkai_shared.config import (
     DatasetConfig,
@@ -162,9 +161,8 @@ def test_callbacks_added_when_mlflow_configured(monkeypatch: pytest.MonkeyPatch)
     assert callbacks is not None
     assert isinstance(training_cfg, DummyConfig)
     assert training_cfg.kwargs["report_to"] == ["mlflow"]
-    assert any(isinstance(cb, TrainingEventsCallback) for cb in callbacks)
-    # GPUMetricsCallback removed — SystemMetricsCallback is the single
-    # source of truth for system metrics now.
+    # Phase 2 removed TrainingEventsCallback; SystemMetricsCallback is
+    # the single source of truth for system metrics.
     assert any(isinstance(cb, SystemMetricsCallback) for cb in callbacks)
 
 
@@ -215,11 +213,9 @@ def test_callbacks_still_attached_when_manager_inactive(monkeypatch: pytest.Monk
 
     callbacks = trainer.kwargs.get("callbacks")
     assert callbacks is not None
-    assert any(isinstance(cb, TrainingEventsCallback) for cb in callbacks)
-    # GPUMetricsCallback removed — SystemMetricsCallback is registered
-    # alongside TrainingEventsCallback whenever mlflow_config is set,
-    # regardless of mlflow_manager active state (this test verifies
-    # the latter).
+    # Phase 2 removed TrainingEventsCallback; SystemMetricsCallback is
+    # registered whenever mlflow_config is set, regardless of
+    # mlflow_manager active state.
     assert any(isinstance(cb, SystemMetricsCallback) for cb in callbacks)
 
 

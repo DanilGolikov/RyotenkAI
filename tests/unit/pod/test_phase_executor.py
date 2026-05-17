@@ -1173,7 +1173,9 @@ class TestPhaseExecutorHelperMethods:
                 error=error,
             )
 
-        mock_mlflow_manager.log_event_error.assert_called_once()
+        # Phase 7: ``log_event_error`` was removed; phase failures are
+        # now captured via :class:`TrainingFailedEvent` on the typed
+        # journal. The MLflow tag is still set (used by legacy filters).
         mock_mlflow_manager.set_tags.assert_called_once()
 
 

@@ -20,7 +20,6 @@ from ryotenkai_pod.trainer.mlflow import (
     MLflowAutologManager,
     MLflowDatasetLogger,
     MLflowDomainLogger,
-    MLflowEventLog,
     MLflowModelRegistry,
     MLflowRunAnalytics,
 )
@@ -74,27 +73,6 @@ class _ConcreteManager:
     def log_dataset_input(self, dataset, context="training") -> bool:
         return True
 
-    def log_event(self, event_type, message, *, category="info", source="system", **kwargs):
-        return {}
-
-    def log_event_start(self, message, **kwargs):
-        return {}
-
-    def log_event_complete(self, message, **kwargs):
-        return {}
-
-    def log_event_error(self, message, **kwargs):
-        return {}
-
-    def log_event_warning(self, message, **kwargs):
-        return {}
-
-    def log_event_info(self, message, **kwargs):
-        return {}
-
-    def log_event_checkpoint(self, message, **kwargs):
-        return {}
-
     def log_pipeline_initialized(self, run_id, total_phases, strategy_chain) -> None:
         pass
 
@@ -142,7 +120,6 @@ class TestModuleExports:
             MLflowAutologManager,
             MLflowDatasetLogger,
             MLflowDomainLogger,
-            MLflowEventLog,
             MLflowModelRegistry,
             MLflowRunAnalytics,
         ):
@@ -234,34 +211,6 @@ class TestProtocolStubMethods:
 
     def test_log_dataset_input_stub(self):
         result = IMLflowManager.log_dataset_input(self._dummy(), MagicMock())
-        assert result is None
-
-    def test_log_event_stub(self):
-        result = IMLflowManager.log_event(self._dummy(), "start", "msg")
-        assert result is None
-
-    def test_log_event_start_stub(self):
-        result = IMLflowManager.log_event_start(self._dummy(), "msg")
-        assert result is None
-
-    def test_log_event_complete_stub(self):
-        result = IMLflowManager.log_event_complete(self._dummy(), "done")
-        assert result is None
-
-    def test_log_event_error_stub(self):
-        result = IMLflowManager.log_event_error(self._dummy(), "err")
-        assert result is None
-
-    def test_log_event_warning_stub(self):
-        result = IMLflowManager.log_event_warning(self._dummy(), "warn")
-        assert result is None
-
-    def test_log_event_info_stub(self):
-        result = IMLflowManager.log_event_info(self._dummy(), "info")
-        assert result is None
-
-    def test_log_event_checkpoint_stub(self):
-        result = IMLflowManager.log_event_checkpoint(self._dummy(), "ckpt")
         assert result is None
 
     def test_log_pipeline_initialized_stub(self):

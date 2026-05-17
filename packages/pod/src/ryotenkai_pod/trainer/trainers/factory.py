@@ -322,9 +322,14 @@ class TrainerFactory:
         callbacks = trainer_kwargs.get("callbacks", []) or []
 
         if mlflow_config:
-            from ryotenkai_pod.trainer.callbacks import TrainingEventsCallback
-
-            callbacks.append(TrainingEventsCallback(mlflow_manager=mlflow_manager))
+            # Phase 2 (ethereal-tumbling-patterson): ``TrainingEventsCallback``
+            # was the dual-path MLflow-event sibling to
+            # :class:`RunnerEventCallback`. With the unified event system
+            # the SSOT lives on the runner bus + journal; the MLflow
+            # attribution layer no longer needs its own HF callback.
+            # The MLflow ``training_events.json`` artifact will be
+            # populated by ``MlflowFinalizer`` (Phase 6) from the journal
+            # instead.
 
             # ``SystemMetricsCallback`` is the single source of truth for
             # system metrics (CPU / GPU / RAM). It logs step-aligned

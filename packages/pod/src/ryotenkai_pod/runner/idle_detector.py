@@ -58,9 +58,19 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from time import monotonic
 from typing import TYPE_CHECKING
+
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.pod_health import (
+    HealthIdleDetectedEvent,
+    HealthIdleDetectedPayload,
+    HealthMaxLifetimeExceededEvent,
+    HealthMaxLifetimeExceededPayload,
+)
 
 if TYPE_CHECKING:
     from ryotenkai_pod.runner.event_bus import EventBus
@@ -68,15 +78,18 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "DEFAULT_GRACE_BEFORE_STOP",
     "DEFAULT_GPU_MEM_MAX_PCT",
     "DEFAULT_GPU_UTIL_MAX",
+    "DEFAULT_GRACE_BEFORE_STOP",
     "DEFAULT_IDLE_THRESHOLD",
     "DEFAULT_MAX_LIFETIME",
     "DEFAULT_POLL_INTERVAL",
     "DEFAULT_STARTUP_GRACE",
+    "ENV_IDLE_THRESHOLD_MINUTES",
+    "ENV_MAX_LIFETIME_HOURS",
     "GPUMetricsProvider",
     "IdleDetector",
+    "resolve_thresholds_from_env",
 ]
 
 
@@ -87,6 +100,46 @@ DEFAULT_POLL_INTERVAL = 30.0
 DEFAULT_GPU_UTIL_MAX = 5  # percent
 DEFAULT_GPU_MEM_MAX_PCT = 30  # percent
 DEFAULT_GRACE_BEFORE_STOP = 30.0  # SIGTERM grace passed to supervisor.request_stop
+
+
+# Env vars the Mac-side training launcher sets so the pod's IdleDetector
+# inherits the user-configured ``pod_lifecycle`` thresholds. Absent /
+# unparseable values fall back to the in-pod defaults above (E-СРЕД fix).
+ENV_MAX_LIFETIME_HOURS = "RYOTENKAI_POD_MAX_LIFETIME_HOURS"
+ENV_IDLE_THRESHOLD_MINUTES = "RYOTENKAI_POD_IDLE_THRESHOLD_MINUTES"
+
+
+def resolve_thresholds_from_env(
+    env: dict[str, str] | None = None,
+) -> tuple[float, float]:
+    """Read ``(max_lifetime_seconds, idle_threshold_seconds)`` from env.
+
+    Used by the runner's lifespan when constructing the
+    :class:`IdleDetector`. Each env var is parsed independently:
+    bad / missing values fall through to the in-pod default. ``env``
+    defaults to :data:`os.environ`; tests pass a tailored mapping.
+    """
+    source = dict(env) if env is not None else dict(os.environ)
+
+    def _float_or(default: float, *, name: str, scale: float) -> float:
+        raw = source.get(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+        except ValueError:
+            return default
+        if value <= 0:
+            return default
+        return value * scale
+
+    max_lifetime_s = _float_or(
+        DEFAULT_MAX_LIFETIME, name=ENV_MAX_LIFETIME_HOURS, scale=3600.0,
+    )
+    idle_threshold_s = _float_or(
+        DEFAULT_IDLE_THRESHOLD, name=ENV_IDLE_THRESHOLD_MINUTES, scale=60.0,
+    )
+    return max_lifetime_s, idle_threshold_s
 
 
 # ``None`` means "couldn't read metrics" — treat as "not idle".
@@ -240,6 +293,12 @@ class IdleDetector:
 
         self._task: asyncio.Task[None] | None = None
         self._started_at: float | None = None
+        # Wall-clock start time for the typed max-lifetime event.
+        # ``_started_at`` uses the injectable monotonic ``_clock`` for
+        # uptime math (tests advance it deterministically); this field
+        # records the real datetime so consumers see when the trainer
+        # actually began.
+        self._started_wall_clock_at: datetime | None = None
 
     # --- read-only accessors ----------------------------------------
 
@@ -255,6 +314,7 @@ class IdleDetector:
         if self.is_running:
             return
         self._started_at = self._clock()
+        self._started_wall_clock_at = datetime.now(UTC)
         self._task = asyncio.create_task(self._loop(), name="idle_detector.loop")
 
     async def stop(self) -> None:
@@ -267,6 +327,7 @@ class IdleDetector:
                 await self._task
         self._task = None
         self._started_at = None
+        self._started_wall_clock_at = None
 
     # --- internals ---------------------------------------------------
 
@@ -318,9 +379,10 @@ class IdleDetector:
             if is_idle:
                 if idle_since is None:
                     idle_since = self._clock()
-                    self._bus.publish(
+                    self._bus.publish_legacy(
                         "gpu_idle_started",
                         {"util": util, "mem_pct": mem_pct},
+                        source="pod://runner/idle_detector",
                     )
                 elif self._clock() - idle_since >= self._idle_threshold:
                     await self._trigger(
@@ -334,9 +396,10 @@ class IdleDetector:
                     return
             elif idle_since is not None:
                 # GPU work resumed — clear the idle timer.
-                self._bus.publish(
+                self._bus.publish_legacy(
                     "gpu_idle_cleared",
                     {"util": util, "mem_pct": mem_pct},
+                    source="pod://runner/idle_detector",
                 )
                 idle_since = None
 
@@ -351,6 +414,61 @@ class IdleDetector:
             return None
 
     async def _trigger(self, *, reason: str, payload: dict[str, object]) -> None:
-        """Publish a structured event and ask the supervisor to stop."""
-        self._bus.publish("idle_detector_triggered", {"reason": reason, **payload})
+        """Publish a structured event and ask the supervisor to stop.
+
+        Emits the typed :class:`HealthIdleDetectedEvent` for the
+        ``gpu_idle`` reason. The ``max_lifetime`` reason now emits the
+        typed :class:`HealthMaxLifetimeExceededEvent` (E-СРЕД fix —
+        replaces the legacy free-form payload). The legacy
+        ``publish_legacy`` shim is kept for backward-compat consumers
+        until a dedicated migration phase removes it.
+        """
+        if reason == "gpu_idle":
+            raw_idle = payload.get("idle_seconds")
+            idle_seconds = float(raw_idle) if isinstance(raw_idle, (int, float)) else 0.0
+            self._bus.publish(
+                HealthIdleDetectedEvent(
+                    source="pod://runner/idle_detector",
+                    run_id="unknown",
+                    offset=UNKNOWN_OFFSET,
+                    payload=HealthIdleDetectedPayload(
+                        idle_duration_s=idle_seconds,
+                        last_activity_at=datetime.now(UTC),
+                    ),
+                ),
+            )
+        elif reason == "max_lifetime":
+            raw_uptime = payload.get("uptime_seconds")
+            uptime_seconds = (
+                float(raw_uptime)
+                if isinstance(raw_uptime, (int, float))
+                else 0.0
+            )
+            started_at = self._started_wall_clock_at or datetime.now(UTC)
+            self._bus.publish(
+                HealthMaxLifetimeExceededEvent(
+                    source="pod://runner/idle_detector",
+                    run_id="unknown",
+                    offset=UNKNOWN_OFFSET,
+                    payload=HealthMaxLifetimeExceededPayload(
+                        started_at=started_at,
+                        max_lifetime_s=float(self._max_lifetime),
+                        actual_runtime_s=uptime_seconds,
+                    ),
+                ),
+            )
+            # Keep the legacy publish for back-compat with any consumer
+            # still watching ``idle_detector_triggered`` (tests + a
+            # handful of dashboards). The typed event is authoritative.
+            self._bus.publish_legacy(
+                "idle_detector_triggered",
+                {"reason": reason, **payload},
+                source="pod://runner/idle_detector",
+            )
+        else:
+            self._bus.publish_legacy(
+                "idle_detector_triggered",
+                {"reason": reason, **payload},
+                source="pod://runner/idle_detector",
+            )
         await self._supervisor.request_stop(grace_seconds=self._grace_before_stop)

@@ -61,11 +61,11 @@ class TestDataBufferCallbacks:
         cbs.on_state_saved("rid", "/state.json")
         mlflow.log_state_saved.assert_called_once_with("rid", "/state.json")
 
+        # Phase 7: per-phase ``log_event_start`` / ``log_event_complete``
+        # were removed — the callbacks are now no-ops. They still must
+        # accept the call and not raise.
         cbs.on_phase_started(1, "sft")
-        mlflow.log_event_start.assert_called()
-
         cbs.on_phase_completed(1, "sft", "completed")
-        mlflow.log_event_complete.assert_called()
 
         cbs.on_checkpoint_cleanup(3, 100)
         mlflow.log_checkpoint_cleanup.assert_called_once_with(3, 100)

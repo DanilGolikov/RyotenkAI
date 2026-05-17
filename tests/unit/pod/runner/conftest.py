@@ -109,11 +109,15 @@ class MockSupervisor:
         except InvalidTransitionError as exc:
             raise SupervisorBusy(f"job in non-terminal state: {exc}") from exc
 
-        self._bus.publish("job_submitted", {"job_id": job_id, "sequence": 0})
+        # Mock supervisor: use the legacy shim so behaviour parity with
+        # the pre-Phase-2 mock is preserved. Real supervisor emits
+        # typed envelopes; tests that assert wire shape verify the
+        # real-supervisor path.
+        self._bus.publish_legacy("job_submitted", {"job_id": job_id, "sequence": 0})
 
         # No real subprocess; just transition to running.
         self._fsm.transition(JobState.RUNNING, message="trainer_spawned")
-        self._bus.publish(
+        self._bus.publish_legacy(
             "trainer_spawned",
             {"pid": -1, "pgid": -1, "command": list(command), "mock": True},
         )
@@ -131,7 +135,9 @@ class MockSupervisor:
             self._fsm.transition(JobState.STOPPING, message="stop_requested")
         except InvalidTransitionError:
             return
-        self._bus.publish("stop_requested", {"grace_seconds": grace_seconds})
+        self._bus.publish_legacy(
+            "stop_requested", {"grace_seconds": grace_seconds},
+        )
 
     async def shutdown(self) -> None:
         if self._running:
@@ -169,7 +175,7 @@ class MockSupervisor:
         else:
             target = JobState.FAILED
 
-        self._bus.publish(
+        self._bus.publish_legacy(
             "trainer_exited",
             {"exit_code": exit_code, "cancellation_requested": cancelled},
         )

@@ -282,7 +282,14 @@ class TestRequestStop:
         await supervisor.request_stop(grace_seconds=0.3)
         await _wait_for_state(fsm, JobState.CANCELLED, timeout=3.0)
 
-        kinds = [e.kind for e in list(bus._buffer)]
+        # Legacy events land as UnknownEvent envelopes whose
+        # ``original_type`` carries the pre-Phase-2 kind string. Typed
+        # events expose the dotted kind directly. We collect both
+        # so the existence check survives the Phase 2 envelope shift.
+        kinds = [
+            getattr(e, "original_type", None) or getattr(e, "kind", "")
+            for e in list(bus._buffer)
+        ]
         assert "stop_escalated" in kinds
         snap = fsm.current()
         assert snap is not None
@@ -511,9 +518,47 @@ class TestCancellationTelemetry:
 
     @staticmethod
     def _events_of(bus: EventBus, kind: str) -> list[dict]:
-        return [
-            e.payload for e in list(bus._buffer) if e.kind == kind
-        ]
+        """Locate events in the bus by legacy / typed kind.
+
+        Phase 2 stores :class:`BaseEvent` envelopes; legacy telemetry
+        kinds are wrapped in :class:`UnknownEvent` whose
+        ``original_type`` carries the legacy string. Typed events
+        (e.g. ``StopRequestedEvent``) expose the dotted kind on the
+        envelope itself; the test helper looks at both the legacy
+        ``original_type`` and a small alias map for typed kinds whose
+        legacy callsites are renamed.
+        """
+        # Map "legacy kind" → "typed dotted kind" so existing tests that
+        # grep ``"stop_requested"`` find the typed
+        # :class:`StopRequestedEvent` after the Phase 2 rewrite.
+        legacy_to_typed = {
+            "stop_requested": "ryotenkai.pod.lifecycle.stop_requested",
+            "job_submitted": "ryotenkai.pod.lifecycle.job_submitted",
+            "trainer_spawned": "ryotenkai.pod.lifecycle.trainer_spawned",
+            "spawn_failed": "ryotenkai.pod.lifecycle.trainer_spawn_failed",
+        }
+        typed_kind = legacy_to_typed.get(kind, kind)
+        out: list[dict] = []
+        for ev in list(bus._buffer):
+            # Typed event match (dotted kind).
+            if getattr(ev, "kind", "") == typed_kind and not hasattr(ev, "original_type"):
+                payload_obj = getattr(ev, "payload", None)
+                if hasattr(payload_obj, "model_dump"):
+                    out.append(payload_obj.model_dump())  # type: ignore[union-attr]
+                elif isinstance(payload_obj, dict):
+                    out.append(dict(payload_obj))
+                else:
+                    out.append({})
+                continue
+            # UnknownEvent / legacy wrapper match by original_type.
+            original = getattr(ev, "original_type", None)
+            if original == kind:
+                raw = getattr(ev, "raw_payload", None)
+                if isinstance(raw, dict):
+                    out.append(dict(raw))
+                else:
+                    out.append({})
+        return out
 
     async def test_request_stop_emits_cancellation_started(
         self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,

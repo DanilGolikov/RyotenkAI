@@ -1,70 +1,71 @@
-"""WebSocket event stream.
+"""WebSocket event stream + HTTP replay fallback.
 
-Endpoint: ``WS /api/v1/jobs/{job_id}/events?since=<offset>``
+Endpoints:
 
-Behaviour:
-1. Verify the FSM is currently bound to ``job_id``; close 4404 otherwise.
-2. Subscribe to the EventBus from ``since`` (default 0).
-3. Replay everything ≥ ``since`` that's still in the ring buffer,
-   then live-stream new events.
-4. If the bus' buffer has truncated past ``since`` AND no disk
-   journal is attached (Phase 12.B), close 4410 (Gone) — the client
-   falls back to the durable JSONL on disk.
-5. Phase 12.B — when an :class:`EventJournal` IS attached, transparently
-   replay records older than the ring's tail from disk before
-   handing off to the live ring. The subscriber sees a continuous
-   monotonic offset stream regardless of whether the underlying
-   storage is RAM or disk. ``DiskJournalExhausted`` (offset older
-   than even the journal's oldest record) still maps to 4410.
-6. Close cleanly when the FSM enters a terminal state — the
-   subscriber loop reads the final event then drains.
+* ``WS  /api/v1/jobs/{job_id}/events?since=<offset>`` — replay then
+  live-stream events to the Mac control plane. Phase 2
+  (ethereal-tumbling-patterson) forwards typed envelopes via
+  :func:`envelope_to_wire`, which adds a back-compat ``timestamp``
+  alias on top of the canonical envelope ``time`` field so existing
+  control-side consumers (job_client.py / training_monitor.py) keep
+  reading the same JSON shape.
+* ``GET /api/v1/jobs/{job_id}/events/replay?after_offset=<int>``
+  (NEW Phase 2) — cursor-paginated NDJSON replay that the control side
+  hits when its WebSocket reconnect detects a gap older than the
+  ring's tail. Pulls from the on-disk journal so the runner can serve
+  events even after a 5+ minute Mac sleep.
 
-Close codes (RFC 6455 application range 4xxx):
-- 4000  client cancelled / WebSocketDisconnect
-- 4404  job_id not bound to the active FSM
-- 4410  buffer truncated past requested ``since`` and not on disk
-- 4422  invalid query (negative ``since``, non-integer)
+WS close codes (RFC 6455 application range 4xxx):
+
+* 4000  client cancelled / WebSocketDisconnect
+* 4404  job_id not bound to the active FSM
+* 4410  buffer truncated past requested ``since`` and not on disk
+* 4422  invalid query (negative ``since``, non-integer)
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 
 from ryotenkai_pod.runner.api.deps import get_bus, get_fsm
 from ryotenkai_pod.runner.event_bus import (
     BufferTruncatedError,
     DiskJournalExhausted,
-    Event,
     EventBus,
+    envelope_to_wire,
 )
-
-if TYPE_CHECKING:
-    pass
+from ryotenkai_shared.errors import JobNotFoundError
+from ryotenkai_shared.events import BaseEvent
 
 router = APIRouter(tags=["events"])
 
 
-# Custom close codes — keep within the 4000-4999 application-private
-# range so they don't collide with the IANA reserved set.
+# Custom close codes — keep within the 4000-4999 application-private range.
 _CLOSE_NOT_FOUND = 4404
 _CLOSE_GONE = 4410
 _CLOSE_INVALID = 4422
 
+# Cap on the HTTP replay batch size so a single request can't OOM the
+# runner. Mirrors the SSOT-side limit documented in the plan.
+_REPLAY_LIMIT_DEFAULT = 1000
+_REPLAY_LIMIT_MAX = 10_000
+
 
 async def _subscribe_with_disk_fallback(
     bus: EventBus, since: int,
-) -> AsyncIterator[Event]:
-    """Yield events from disk first (when needed), then from the ring.
+) -> AsyncIterator[BaseEvent]:
+    """Yield typed envelopes from disk first (when needed), then from the ring.
 
-    Phase 12.B contract:
+    Phase 2 contract:
+
     * ``since >= ring_oldest`` (or ring empty) → straight ring subscribe.
     * ``since < ring_oldest`` AND journal attached → drain the journal
       from ``since`` up to (but not including) ``ring_oldest``, then
-      hand off to ``bus.subscribe(since=ring_oldest)`` so the live
-      stream picks up where disk replay stopped — no overlap.
+      hand off to ``bus.subscribe`` at exactly ``ring_oldest`` so the
+      live stream picks up where disk replay stopped — no overlap.
     * ``since < ring_oldest`` AND journal absent → fall through to
       ``bus.subscribe`` which raises :class:`BufferTruncatedError`.
     * ``since < disk_oldest`` → :class:`DiskJournalExhausted`.
@@ -72,18 +73,15 @@ async def _subscribe_with_disk_fallback(
     journal = bus.journal
     ring_oldest = bus.oldest_offset
 
-    # Fast path: ring covers the request, OR ring is empty (in which
-    # case ``subscribe`` will live-stream from publish forward).
     if ring_oldest is None or since >= ring_oldest:
-        async for event in bus.subscribe(since=since):
-            yield event
+        async for envelope in bus.subscribe(since=since, consumer_id="ws"):
+            yield envelope
         return
 
-    # Slow path — disk replay needed. Verify journal can serve us.
     if journal is None:
         # Let ``subscribe`` raise BufferTruncatedError as before.
-        async for event in bus.subscribe(since=since):
-            yield event
+        async for envelope in bus.subscribe(since=since, consumer_id="ws"):
+            yield envelope
         return
 
     disk_oldest = journal.oldest_persisted_offset()
@@ -95,20 +93,17 @@ async def _subscribe_with_disk_fallback(
         )
 
     # Stage 1 — disk records ``[since, ring_oldest)``.
-    for record in journal.iter_records(since=since):
-        if record.offset >= ring_oldest:
+    for envelope in journal.iter_envelopes(since=since):
+        if envelope.offset >= ring_oldest:
             break
-        yield Event(
-            offset=record.offset,
-            timestamp=record.ts,
-            kind=record.kind,
-            payload=dict(record.payload),
-        )
+        if envelope.offset < since:
+            continue
+        yield envelope
 
     # Stage 2 — hand off to ring at exactly ``ring_oldest`` so we
     # neither duplicate records (no overlap) nor leave a gap.
-    async for event in bus.subscribe(since=ring_oldest):
-        yield event
+    async for envelope in bus.subscribe(since=ring_oldest, consumer_id="ws"):
+        yield envelope
 
 
 @router.websocket("/jobs/{job_id}/events")
@@ -117,16 +112,9 @@ async def stream_events(
     job_id: str,
     since: int = Query(default=0, ge=0),
 ) -> None:
-    # Resolve singletons — WS routes don't get FastAPI Depends() on
-    # the dependency-injection decorators, so we reach into app.state
-    # directly. ``deps.get_fsm`` / ``get_bus`` accept either Request
-    # or WebSocket since both expose ``.app`` / ``.app.state``.
     fsm = get_fsm(websocket)  # type: ignore[arg-type]
     bus = get_bus(websocket)  # type: ignore[arg-type]
 
-    # 404 check before accept — WS spec: server may close with a 4xxx
-    # code immediately after handshake. Accept first, send the close
-    # frame, return.
     snap = fsm.current()
     if snap is None or snap.job_id != job_id:
         await websocket.accept()
@@ -135,20 +123,13 @@ async def stream_events(
 
     await websocket.accept()
 
-    # Phase 14.E (V3) — heartbeat marking centralized in
-    # :mod:`src.runner.api._activity`. Pre-14.E the WS handler
-    # inlined the ``getattr(app.state, "heartbeat", ...)`` +
-    # ``mark_active`` calls; now :func:`send_ws_with_activity`
-    # owns the "send then mark" ordering. When Mac is asleep,
-    # ``send_json`` hangs or raises (TCP backpressure / connection
-    # loss) ⇒ mark_active never fires ⇒ heartbeat goes stale ⇒
-    # correct. PodTerminator reads the ledger on terminal hooks.
     from ryotenkai_pod.runner.api._activity import send_ws_with_activity
 
     try:
-        async for event in _subscribe_with_disk_fallback(bus, since=since):
+        async for envelope in _subscribe_with_disk_fallback(bus, since=since):
+            wire = envelope_to_wire(envelope)
             await send_ws_with_activity(
-                websocket, event.to_dict(), websocket.app.state,
+                websocket, wire, websocket.app.state,
             )
     except DiskJournalExhausted as exc:
         await websocket.close(
@@ -163,15 +144,80 @@ async def stream_events(
         )
         return
     except ValueError as exc:
-        # since=N where N > next_offset — client cursor is corrupt.
         await websocket.close(code=_CLOSE_INVALID, reason=str(exc)[:120])
         return
     except WebSocketDisconnect:
-        # Client closed the connection — normal exit.
         return
 
-    # The async iterator can also exit cleanly when the bus closes
-    # (lifespan shutdown). Send a final close frame so the client
-    # learns this isn't a network error.
     if websocket.client_state.name == "CONNECTED":
         await websocket.close(code=status.WS_1001_GOING_AWAY)
+
+
+# ---------------------------------------------------------------------------
+# HTTP replay (Phase 2 fallback)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/jobs/{job_id}/events/replay",
+    summary="Cursor-paginated NDJSON replay of pod-side events",
+)
+def replay_events(
+    job_id: str,
+    request: Request,
+    after_offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=_REPLAY_LIMIT_DEFAULT, ge=1, le=_REPLAY_LIMIT_MAX),
+    source: str | None = Query(default=None),
+) -> Response:
+    """Return up to ``limit`` envelopes with ``offset > after_offset``.
+
+    Closes Risk R-01 (pod journal lost on cold WS reconnect): the
+    control side hits this endpoint after WS drops past the ring's
+    tail to back-fill from the on-disk journal. Response is
+    ``application/x-ndjson`` so cursors can be processed without
+    JSON-array buffering on either end.
+
+    The response carries ``X-Next-Offset`` so the client can resume
+    pagination on the next call (set to the last returned offset, or
+    ``after_offset`` if no events matched). The body is line-by-line
+    JSON of the same wire shape the WebSocket emits.
+    """
+    fsm = get_fsm(request)
+    bus = get_bus(request)
+    snap = fsm.current()
+    if snap is None or snap.job_id != job_id:
+        raise JobNotFoundError(
+            detail=f"job_id={job_id!r} is not the active job",
+            context={"job_id": job_id},
+        )
+
+    journal = bus.journal
+
+    lines: list[str] = []
+    last_offset = after_offset
+
+    # Always serve from the journal when one is attached (covers
+    # offsets older than the ring); fall back to the ring when no
+    # journal is present.
+    iterator = (
+        journal.iter_envelopes(since=after_offset + 1)
+        if journal is not None
+        else bus.iter_buffered_envelopes()
+    )
+    for envelope in iterator:
+        if envelope.offset <= after_offset:
+            continue
+        if source is not None and envelope.source != source:
+            continue
+        wire = envelope_to_wire(envelope)
+        lines.append(json.dumps(wire, separators=(",", ":")))
+        last_offset = envelope.offset
+        if len(lines) >= limit:
+            break
+
+    body = "\n".join(lines) + ("\n" if lines else "")
+    return Response(
+        content=body,
+        media_type="application/x-ndjson",
+        headers={"X-Next-Offset": str(last_offset)},
+    )

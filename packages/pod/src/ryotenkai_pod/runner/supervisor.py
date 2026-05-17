@@ -79,6 +79,18 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.pod_lifecycle import (
+    JobSubmittedEvent,
+    JobSubmittedPayload,
+    StopRequestedEvent,
+    StopRequestedPayload,
+    TrainerSpawnedEvent,
+    TrainerSpawnedPayload,
+    TrainerSpawnFailedEvent,
+    TrainerSpawnFailedPayload,
+)
+
 from ryotenkai_pod.runner.state import (
     InvalidTransitionError,
     JobState,
@@ -260,8 +272,16 @@ class Supervisor:
             raise SupervisorBusy(f"job in non-terminal state: {exc}") from exc
 
         self._bus.publish(
-            "job_submitted",
-            {"job_id": job_id, "sequence": 0},
+            JobSubmittedEvent(
+                source="pod://runner/supervisor",
+                run_id=job_id,
+                offset=UNKNOWN_OFFSET,
+                payload=JobSubmittedPayload(
+                    job_id=job_id,
+                    config_hash="",
+                    image_tag="",
+                ),
+            ),
         )
 
         try:
@@ -271,7 +291,16 @@ class Supervisor:
             # restore_or_init doesn't see a stuck ``preparing`` state.
             with contextlib.suppress(InvalidTransitionError):
                 self._fsm.transition(JobState.FAILED, message="spawn_failed")
-            self._bus.publish("spawn_failed", {})
+            self._bus.publish(
+                TrainerSpawnFailedEvent(
+                    source="pod://runner/supervisor",
+                    run_id=job_id,
+                    offset=UNKNOWN_OFFSET,
+                    payload=TrainerSpawnFailedPayload(
+                        reason="spawn_failed",
+                    ),
+                ),
+            )
             raise
 
     async def _spawn(
@@ -382,9 +411,21 @@ class Supervisor:
             )
 
         self._fsm.transition(JobState.RUNNING, message="trainer_spawned")
+        # The FSM snapshot is the authoritative source for ``run_id``
+        # here — ``submit_and_spawn`` set it just before calling _spawn.
+        snap = self._fsm.current()
+        run_id = snap.job_id if snap is not None else "unknown"
         self._bus.publish(
-            "trainer_spawned",
-            {"pid": self._proc.pid, "pgid": self._pgid, "command": list(command)},
+            TrainerSpawnedEvent(
+                source="pod://runner/supervisor",
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=TrainerSpawnedPayload(
+                    pid=self._proc.pid,
+                    cmdline=" ".join(command),
+                    cwd=str(workdir) if workdir is not None else "",
+                ),
+            ),
         )
 
     async def request_stop(
@@ -434,21 +475,25 @@ class Supervisor:
         # for any consumer that grep'd it pre-9.C. The new
         # ``cancellation_started`` carries the structured telemetry
         # payload; both fire on the same FSM transition.
-        self._bus.publish("stop_requested", {"grace_seconds": grace_seconds})
+        snap = self._fsm.current()
+        run_id = snap.job_id if snap is not None else "unknown"
         self._bus.publish(
+            StopRequestedEvent(
+                source="pod://runner/supervisor",
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=StopRequestedPayload(grace_seconds=grace_seconds),
+            ),
+        )
+        self._bus.publish_legacy(
             CANCELLATION_STARTED,
             {
                 "requested_at_ms": self._cancellation_started_at_ms,
                 "grace_seconds": grace_seconds,
-                # ``reason`` is informational — supervisor doesn't know
-                # why the user stopped; it just got the request. Other
-                # callers (idle_detector, max_lifetime) populate it
-                # via a future ``request_stop(reason="idle_timeout")``
-                # parameter — wired separately if/when those paths
-                # gain dedicated reason strings. Default is the
-                # canonical "user clicked stop" reason.
                 "reason": "user_stop",
             },
+            source="pod://runner/supervisor",
+            run_id=run_id,
         )
         self._signal_group(signal.SIGTERM)
 
@@ -469,9 +514,10 @@ class Supervisor:
         try:
             await asyncio.wait_for(self._proc.wait(), timeout=grace_seconds)
         except TimeoutError:
-            self._bus.publish(
+            self._bus.publish_legacy(
                 "stop_escalated",
                 {"reason": "grace_expired", "grace_seconds": grace_seconds},
+                source="pod://runner/supervisor",
             )
             self._signal_group(signal.SIGKILL)
 
@@ -516,12 +562,13 @@ class Supervisor:
         # post-mortem (which can run as soon as proc dies) sees the
         # flag and synthesises the right payload.
         self._watchdog_fired = True
-        self._bus.publish(
+        self._bus.publish_legacy(
             "watchdog_timeout",
             {
                 "wall_timeout_seconds": wall_timeout_seconds,
                 "grace_seconds": self._watchdog_grace,
             },
+            source="pod://runner/supervisor",
         )
         self._signal_group(signal.SIGTERM)
 
@@ -645,9 +692,10 @@ class Supervisor:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # pragma: no cover — best effort
-                self._bus.publish(
+                self._bus.publish_legacy(
                     "stream_error",
                     {"kind": kind, "error": repr(exc)},
+                    source="pod://runner/supervisor",
                 )
                 return
             if not raw:
@@ -751,7 +799,14 @@ class Supervisor:
         # (PR-B) but that duplicated the postmortem dump on Mac and was
         # reverted; the diagnostic-grace window (PR-C) gives Mac enough
         # room to SCP before pod teardown.
-        self._bus.publish("trainer_exited", trainer_exited_event)
+        snap = self._fsm.current()
+        run_id_for_exit = snap.job_id if snap is not None else "unknown"
+        self._bus.publish_legacy(
+            "trainer_exited",
+            trainer_exited_event,
+            source="pod://runner/supervisor",
+            run_id=run_id_for_exit,
+        )
 
         try:
             self._fsm.transition(target, message=message)
@@ -773,7 +828,7 @@ class Supervisor:
                 CANCELLATION_COMPLETED,
                 latency_ms_since,
             )
-            self._bus.publish(
+            self._bus.publish_legacy(
                 CANCELLATION_COMPLETED,
                 {
                     "total_latency_ms": latency_ms_since(
@@ -784,6 +839,8 @@ class Supervisor:
                     "signal": signal_name,
                     "requested_at_ms": self._cancellation_started_at_ms,
                 },
+                source="pod://runner/supervisor",
+                run_id=run_id_for_exit,
             )
 
         # Fire the terminal hook AFTER the FSM transition lands. Errors

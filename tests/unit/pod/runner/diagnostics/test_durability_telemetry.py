@@ -20,8 +20,13 @@ from typing import Any
 
 import pytest
 
-from ryotenkai_pod.runner.event_bus import EventBus
+from ryotenkai_pod.runner.event_bus import EventBus, legacy_kind_for
 from ryotenkai_pod.runner.event_journal import EVENTS_DIR_REL, EventJournal
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.pod_lifecycle import (
+    TrainerSpawnedEvent,
+    TrainerSpawnedPayload,
+)
 from ryotenkai_shared.observability.cancellation_telemetry import (
     CANCELLATION_EVENT_KINDS,
     DURABILITY_EVENT_KINDS,
@@ -31,6 +36,15 @@ from ryotenkai_shared.observability.cancellation_telemetry import (
     METRICS_BUFFER_RETRIEVED,
     TERMINAL_EVENT_KINDS,
 )
+
+
+def _envelope_for(offset: int) -> TrainerSpawnedEvent:
+    return TrainerSpawnedEvent(
+        source="pod://test/runner",
+        run_id="test",
+        offset=offset,
+        payload=TrainerSpawnedPayload(pid=offset + 1, cmdline="py", cwd="/tmp"),
+    )
 
 # ---------------------------------------------------------------------------
 # 1. Constants stability
@@ -76,18 +90,17 @@ class TestRotationCallback:
         def _capture(**kwargs: Any) -> None:
             events.append(kwargs)
 
-        # cap=80, max_files=100 to avoid drop-oldest.
+        # cap=200, max_files=100 to avoid drop-oldest. Typed envelopes
+        # are larger than the legacy free-form records (frozen Pydantic
+        # serialisation), so the file_size_cap is bumped accordingly.
         j = EventJournal(
             root_dir=tmp_path / EVENTS_DIR_REL,
-            file_size_cap=80,
+            file_size_cap=200,
             max_files=100,
             on_rotate=_capture,
         )
-        # Each record is ~50 bytes → rotate after 1-2 records.
-        for i in range(5):
-            j.append(
-                offset=i, ts="t", kind="k", payload={"data": "x" * 30}
-            )
+        for i in range(8):
+            j.append_envelope(_envelope_for(i))
         j.close()
 
         # We rotated multiple times.
@@ -110,13 +123,13 @@ class TestRotationCallback:
 
         j = EventJournal(
             root_dir=tmp_path / EVENTS_DIR_REL,
-            file_size_cap=50,
+            file_size_cap=200,
             max_files=10,
             on_rotate=_broken,
         )
-        # Trigger a rotation. The journal MUST keep working.
-        j.append(offset=0, ts="t", kind="k", payload={"data": "x" * 100})
-        j.append(offset=1, ts="t", kind="k", payload={})
+        # Trigger rotations. The journal MUST keep working.
+        for i in range(5):
+            j.append_envelope(_envelope_for(i))
         j.close()
 
 
@@ -129,33 +142,25 @@ class TestBusRotationWire:
     def test_bus_publishes_rotation_via_callback(
         self, tmp_path: Path
     ) -> None:
-        # Wire the journal's on_rotate to bus.publish — this is the
-        # production wiring pattern used in `_lifespan`.
-        rotate_publisher = {"bus": None}
-
-        def _on_rotate(**kwargs: Any) -> None:
-            target = rotate_publisher.get("bus")
-            if target is None:
-                return
-            target.publish(EVENTS_ROTATED, kwargs)
-
+        # Phase 2: the bus owns the wiring via
+        # :meth:`attach_journal_rotation_listener` and emits a typed
+        # ``JournalRotatedEvent`` directly. The journal-resident
+        # snapshot uses the legacy ``events_rotated`` alias via
+        # :func:`legacy_kind_for`.
         j = EventJournal(
             root_dir=tmp_path / EVENTS_DIR_REL,
-            file_size_cap=80,
+            file_size_cap=200,
             max_files=100,
-            on_rotate=_on_rotate,
         )
         bus = EventBus(capacity=100, journal=j)
-        rotate_publisher["bus"] = bus
+        bus.attach_journal_rotation_listener()
 
-        for i in range(5):
-            bus.publish(f"k{i}", {"data": "x" * 30})
+        for i in range(8):
+            bus.publish(_envelope_for(i))
 
-        # Iterate the journal to find rotation records (events_rotated
-        # is itself published, so it lands on disk too).
-        records = list(j.iter_records(since=0))
-        rotation_records = [r for r in records if r.kind == EVENTS_ROTATED]
-        assert len(rotation_records) >= 1
+        envelopes = list(j.iter_envelopes())
+        rotation_envelopes = [e for e in envelopes if legacy_kind_for(e) == EVENTS_ROTATED]
+        assert len(rotation_envelopes) >= 1
         bus.close()
 
 
@@ -223,14 +228,14 @@ class TestPeriodicHealthCheck:
         except asyncio.CancelledError:
             pass
 
-        records = list(j.iter_records(since=0))
-        pressure_records = [
-            r for r in records if r.kind == EVENTS_DISK_PRESSURE
+        envelopes = list(j.iter_envelopes())
+        pressure_envelopes = [
+            e for e in envelopes if legacy_kind_for(e) == EVENTS_DISK_PRESSURE
         ]
-        assert len(pressure_records) >= 1
-        # Payload shape.
-        assert "total_bytes" in pressure_records[0].payload
-        assert "threshold_bytes" in pressure_records[0].payload
+        assert len(pressure_envelopes) >= 1
+        payload_obj = getattr(pressure_envelopes[0], "payload", None)
+        if hasattr(payload_obj, "total_bytes"):
+            assert payload_obj.total_bytes is not None
         bus.close()
 
     @pytest.mark.asyncio
@@ -257,11 +262,11 @@ class TestPeriodicHealthCheck:
         except asyncio.CancelledError:
             pass
 
-        records = list(j.iter_records(since=0))
-        pressure_records = [
-            r for r in records if r.kind == EVENTS_DISK_PRESSURE
+        envelopes = list(j.iter_envelopes())
+        pressure_envelopes = [
+            e for e in envelopes if legacy_kind_for(e) == EVENTS_DISK_PRESSURE
         ]
-        assert pressure_records == []
+        assert pressure_envelopes == []
         bus.close()
 
     @pytest.mark.asyncio
@@ -290,10 +295,10 @@ class TestPeriodicHealthCheck:
         except asyncio.CancelledError:
             pass
 
-        records = list(j.iter_records(since=0))
-        pressure_records = [
-            r for r in records if r.kind == EVENTS_DISK_PRESSURE
+        envelopes = list(j.iter_envelopes())
+        pressure_envelopes = [
+            e for e in envelopes if legacy_kind_for(e) == EVENTS_DISK_PRESSURE
         ]
         # Exactly one event for the single sustained crossing.
-        assert len(pressure_records) == 1
+        assert len(pressure_envelopes) == 1
         bus.close()

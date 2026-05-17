@@ -204,7 +204,12 @@ def test_setup_success_enables_system_metrics(monkeypatch: pytest.MonkeyPatch) -
     assert mgr.is_active is True
 
 
-def test_setup_connectivity_failure_logs_event_and_disables_mlflow(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_setup_connectivity_failure_disables_mlflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 6.b: connectivity failure must disable MLflow. The legacy
+    event-log error assertion was removed when MLflowEventLog became
+    a no-op shim; setup-side logging now flows through the standard
+    logger only.
+    """
     fake_mlflow, _shared = _install_fake_mlflow(monkeypatch)
     fake_mlflow.set_tracking_uri = lambda uri: None  # type: ignore[attr-defined]
     fake_mlflow.set_experiment = lambda name: None  # type: ignore[attr-defined]
@@ -215,7 +220,9 @@ def test_setup_connectivity_failure_logs_event_and_disables_mlflow(monkeypatch: 
     ok = mgr.setup(timeout=0.01, max_retries=2)
     assert ok is False
     assert mgr.is_active is False
-    assert any(e["event_type"] == "error" for e in mgr.get_events())
+    # Phase 7: ``get_events`` removed; the typed journal is the SSOT
+    # and connectivity errors surface through the structured logger
+    # plus ``gateway.last_connectivity_error``.
 
 
 def test_enable_and_disable_autolog_transformers_branch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -334,7 +341,7 @@ def test_get_best_run_returns_first_row(monkeypatch: pytest.MonkeyPatch) -> None
     mgr._mlflow = fake_mlflow
     # Update analytics with fake mlflow module and experiment_name
     from ryotenkai_pod.trainer.mlflow.run_analytics import MLflowRunAnalytics
-    mgr._analytics = MLflowRunAnalytics(mgr._gateway, fake_mlflow, experiment_name="test", event_log=mgr._event_log)
+    mgr._analytics = MLflowRunAnalytics(mgr._gateway, fake_mlflow, experiment_name="test")
     best = mgr.get_best_run(metric="eval_loss", mode="min")
     assert best is not None
     assert best["run_id"] == "r1" or best["run_id"] == "r2"

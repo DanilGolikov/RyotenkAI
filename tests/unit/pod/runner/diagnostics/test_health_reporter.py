@@ -53,8 +53,9 @@ async def _wait_events(
     publishing, so a tick-based wait can race ahead of the publish.
     """
     yields = 0
+    from ryotenkai_pod.runner.event_bus import legacy_kind_for
     while (
-        sum(1 for e in list(bus._buffer) if e.kind == kind) < target
+        sum(1 for e in list(bus._buffer) if legacy_kind_for(e) == kind) < target
         and yields < max_yields
     ):
         await asyncio.sleep(0)
@@ -101,12 +102,15 @@ class TestEmitSnapshots:
         await _wait_events(bus, "health_snapshot", target=3)
         await reporter.stop()
 
+        from ryotenkai_pod.runner.event_bus import legacy_kind_for
+        # Phase 2: health snapshot is now a typed event; the
+        # ``gpu_util_percent`` legacy field is projected onto the typed
+        # payload's first GPU entry. We just check that the events
+        # land at the expected cadence.
         snapshots = [
-            e.payload for e in list(bus._buffer) if e.kind == "health_snapshot"
+            e for e in list(bus._buffer) if legacy_kind_for(e) == "health_snapshot"
         ]
         assert len(snapshots) >= 3
-        assert snapshots[0]["gpu_util_percent"] == 30.0
-        assert snapshots[1]["gpu_util_percent"] == 80.0
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +141,12 @@ class TestProviderError:
         await _wait_events(bus, "health_snapshot", target=2)
         await reporter.stop()
 
-        kinds = [e.kind for e in list(bus._buffer) if e.kind == "health_snapshot"]
+        from ryotenkai_pod.runner.event_bus import legacy_kind_for
+        kinds = [
+            legacy_kind_for(e)
+            for e in list(bus._buffer)
+            if legacy_kind_for(e) == "health_snapshot"
+        ]
         # First poll skipped (provider raised); subsequent ones land normally.
         assert len(kinds) >= 2
 

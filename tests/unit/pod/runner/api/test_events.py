@@ -69,8 +69,8 @@ class TestReplay:
         # plugins_unpacked, trainer_spawned). Add two more then
         # subscribe from 4.
         bus = runner_client.app.state.bus
-        bus.publish("a", {"i": 1})
-        bus.publish("b", {"i": 2})
+        bus.publish_legacy("a", {"i": 1})
+        bus.publish_legacy("b", {"i": 2})
 
         with runner_client.websocket_connect(
             f"{API_V1_PREFIX}/jobs/j-1/events?since=4",
@@ -93,7 +93,7 @@ class TestLive:
             f"{API_V1_PREFIX}/jobs/j-1/events?since=3",  # skip job_submitted, plugins_unpacked, trainer_spawned
         ) as ws:
             # Now publish a live event — the WS subscriber wakes up.
-            runner_client.app.state.bus.publish("step", {"loss": 0.5})
+            runner_client.app.state.bus.publish_legacy("step", {"loss": 0.5})
             event = ws.receive_json()
             assert event["kind"] == "step"
             assert event["payload"] == {"loss": 0.5}
@@ -125,7 +125,7 @@ class TestCloseCodes:
         runner_client.app.state.bus = narrow
         # Refill events: 10 → buffer holds last 4 (offsets 6..9).
         for _ in range(10):
-            narrow.publish("x", {})
+            narrow.publish_legacy("x", {})
 
         with pytest.raises(WebSocketDisconnect) as exc_info, runner_client.websocket_connect(
             f"{API_V1_PREFIX}/jobs/j-1/events?since=0",  # truncated
