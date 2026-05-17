@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ryotenkai_shared.contracts.pipeline_conditions import Condition
+
+if TYPE_CHECKING:
+    from ryotenkai_shared.errors import RyotenkAIError
 
 
 def utc_now_iso() -> str:
@@ -198,6 +201,139 @@ class PodMetadata:
 
 
 @dataclass(slots=True)
+class AttemptFailure:
+    """Phase H2 — typed failure record persisted in ``pipeline_state.json``.
+
+    Replaces (alongside, for backward-compat) the legacy ``error: str | None``
+    plain-string field with typed semantics matching the
+    :class:`RyotenkAIError` hierarchy. Lives on the
+    :class:`PipelineAttemptState` so resume/web-UI/automation can read
+    typed failure info without re-parsing stderr.
+
+    Schema migration: ``PipelineState.from_dict`` (and the lower-level
+    :func:`AttemptFailure.from_legacy_error_string`) auto-back-fill a
+    minimal ``AttemptFailure`` when a legacy state file carries only
+    the plain ``error`` string and no structured ``failure`` block.
+    """
+
+    code: str = ""                       # ErrorCode value
+    title: str = ""
+    detail: str | None = None
+    stage_name: str | None = None        # None if pre-stage failure
+    stage_idx: int | None = None
+    stage_total: int | None = None
+    trace_id: str | None = None
+    request_id: str | None = None
+    context: dict[str, Any] | None = None
+    failed_at: str = ""                  # ISO timestamp
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "title": self.title,
+            "detail": self.detail,
+            "stage_name": self.stage_name,
+            "stage_idx": self.stage_idx,
+            "stage_total": self.stage_total,
+            "trace_id": self.trace_id,
+            "request_id": self.request_id,
+            "context": dict(self.context) if self.context else None,
+            "failed_at": self.failed_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AttemptFailure:
+        context_raw = data.get("context")
+        context: dict[str, Any] | None
+        if isinstance(context_raw, dict):
+            context = dict(context_raw)
+        else:
+            context = None
+        return cls(
+            code=str(data.get("code", "")),
+            title=str(data.get("title", "")),
+            detail=data.get("detail"),
+            stage_name=data.get("stage_name"),
+            stage_idx=_int_or_none(data.get("stage_idx")),
+            stage_total=_int_or_none(data.get("stage_total")),
+            trace_id=data.get("trace_id"),
+            request_id=data.get("request_id"),
+            context=context,
+            failed_at=str(data.get("failed_at", "")),
+        )
+
+    @classmethod
+    def from_exception(
+        cls,
+        exc: "RyotenkAIError",
+        *,
+        stage_name: str | None = None,
+        stage_idx: int | None = None,
+        stage_total: int | None = None,
+        request_id: str | None = None,
+        failed_at: str | None = None,
+    ) -> AttemptFailure:
+        """Construct from a typed exception.
+
+        ``stage_*`` and ``request_id`` are explicit kwargs because the
+        exception itself may not carry them — a pre-stage
+        :class:`RyotenkAIError` has no stage info, and ``request_id``
+        comes from the contextvar rather than the exception.
+        """
+        # Allow stage info to flow either from kwargs or from
+        # exc.context (H1 stamps it there for stage failures).
+        ctx = dict(exc.context) if exc.context else {}
+        resolved_stage_name = stage_name or ctx.get("stage_name")
+        resolved_stage_idx = stage_idx if stage_idx is not None else _int_or_none(ctx.get("stage_idx"))
+        resolved_stage_total = stage_total if stage_total is not None else _int_or_none(ctx.get("stage_total"))
+        return cls(
+            code=exc.code.value,
+            title=exc.title,
+            detail=exc.detail,
+            stage_name=resolved_stage_name if isinstance(resolved_stage_name, str) else None,
+            stage_idx=resolved_stage_idx,
+            stage_total=resolved_stage_total,
+            trace_id=exc.trace_id,
+            request_id=request_id,
+            context=ctx or None,
+            failed_at=failed_at or utc_now_iso(),
+        )
+
+    @classmethod
+    def from_legacy_error_string(
+        cls,
+        error: str,
+        *,
+        failed_at: str = "",
+    ) -> AttemptFailure:
+        """Phase H2 migration — back-fill from a legacy ``error: str`` field.
+
+        Pre-H2 ``pipeline_state.json`` files only carry an ``error``
+        string and the structured ``failure`` block. To keep resume
+        tooling typed-aware across the upgrade we synthesise an
+        :class:`AttemptFailure` with ``code="LEGACY_ERROR"`` so the
+        consumer can tell apart "real failure record" from "synthesised
+        from the plain string".
+        """
+        return cls(
+            code="LEGACY_ERROR",
+            title="Legacy attempt failure",
+            detail=error,
+            failed_at=failed_at,
+        )
+
+
+def _int_or_none(value: Any) -> int | None:
+    """Coerce ``value`` to int; return ``None`` if not parseable."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass(slots=True)
 class PipelineAttemptState:
     attempt_id: str
     attempt_no: int
@@ -227,6 +363,11 @@ class PipelineAttemptState:
     #: anonymous runs (e.g. ``ryotenkai run start -c X.yaml`` without
     #: ``--project``).
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: Phase H2 — typed failure record. ``None`` for in-flight or
+    #: successful attempts. Auto-back-filled from a legacy ``error``
+    #: string when loading a pre-H2 state file (see
+    #: :meth:`AttemptFailure.from_legacy_error_string`).
+    failure: AttemptFailure | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -255,6 +396,10 @@ class PipelineAttemptState:
             # Variant 1 — empty dict ⇒ omit ``metadata`` from the JSON
             # to keep legacy state files diff-clean.
             **({"metadata": dict(self.metadata)} if self.metadata else {}),
+            # Phase H2 — None ⇒ omit ``failure`` from JSON for
+            # in-flight / successful attempts.
+            **({"failure": self.failure.to_dict()}
+               if self.failure is not None else {}),
         }
 
     @classmethod
@@ -279,6 +424,29 @@ class PipelineAttemptState:
             dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
         )
 
+        # Phase H2 — parse the structured ``failure`` block; back-fill
+        # from the legacy ``error: str`` field when missing AND the
+        # attempt is in a terminal-failed state. Successful / pending
+        # attempts produce ``failure=None``.
+        failure_raw = data.get("failure")
+        failure: AttemptFailure | None
+        if isinstance(failure_raw, dict):
+            failure = AttemptFailure.from_dict(failure_raw)
+        else:
+            failure = None
+        legacy_error = data.get("error")
+        attempt_status = str(data.get("status", StageRunState.STATUS_PENDING))
+        if (
+            failure is None
+            and isinstance(legacy_error, str)
+            and legacy_error
+            and attempt_status == StageRunState.STATUS_FAILED
+        ):
+            failure = AttemptFailure.from_legacy_error_string(
+                legacy_error,
+                failed_at=str(data.get("completed_at") or ""),
+            )
+
         return cls(
             attempt_id=str(data.get("attempt_id", "")),
             attempt_no=int(data.get("attempt_no", 0) or 0),
@@ -286,7 +454,7 @@ class PipelineAttemptState:
             requested_action=str(data.get("requested_action", "fresh")),
             effective_action=str(data.get("effective_action", "fresh")),
             restart_from_stage=data.get("restart_from_stage"),
-            status=str(data.get("status", StageRunState.STATUS_PENDING)),
+            status=attempt_status,
             started_at=str(data.get("started_at", "")),
             completed_at=data.get("completed_at"),
             error=data.get("error"),
@@ -300,6 +468,7 @@ class PipelineAttemptState:
             stage_runs=stage_runs,
             pod_metadata=pod_metadata,
             metadata=metadata,
+            failure=failure,
         )
 
 

@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any
 
 from ryotenkai_control.pipeline.state import lineage_manager
 from ryotenkai_control.pipeline.state.models import (
+    AttemptFailure,
     PipelineAttemptState,
     PipelineState,
     StageLineageRef,
@@ -455,6 +456,27 @@ class AttemptController:
         """
         if self._active_attempt is not None:
             self._active_attempt.error = error
+
+    def record_failure(self, failure: AttemptFailure) -> None:
+        """Phase H2 — persist a typed :class:`AttemptFailure` on the active attempt.
+
+        Auto-persists via ``save_fn``. Also back-fills the legacy
+        ``error: str`` field with ``failure.detail`` so tooling that
+        still reads the plain-string field sees a sensible value.
+
+        Silent no-op when no attempt is active — covers the pre-stage
+        failure path that races attempt registration (orchestrator's
+        ``_prepare_stateful_attempt`` raises before
+        ``register_attempt``). Callers using this path must instead
+        write to ``init_error.log`` (Phase H3) or to the worker-level
+        outcome block (Phase H1) so the failure is still observable.
+        """
+        if self._active_attempt is None:
+            return
+        self._active_attempt.failure = failure
+        if failure.detail and not self._active_attempt.error:
+            self._active_attempt.error = failure.detail
+        self._persist()
 
     def set_mlflow_run_ids(
         self,

@@ -5,7 +5,7 @@
 # here. Changing any of those downstream imports to go through the package
 # would re-introduce the cycle — see the top of transitioner.py.
 from ryotenkai_control.pipeline.state.attempt_controller import AttemptController, AttemptControllerError
-from ryotenkai_control.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
+from ryotenkai_control.pipeline.state.models import AttemptFailure, PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
 from ryotenkai_control.pipeline.state.store import (
     SCHEMA_VERSION,
     PipelineRunLock,
@@ -30,6 +30,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "AttemptController",
     "AttemptControllerError",
+    "AttemptFailure",
     "PipelineAttemptState",
     "PipelineRunLock",
     "PipelineState",
