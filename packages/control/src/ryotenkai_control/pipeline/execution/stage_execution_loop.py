@@ -75,8 +75,6 @@ from typing import TYPE_CHECKING, Any
 
 from ryotenkai_control.pipeline.artifacts.base import utc_now_iso
 from ryotenkai_control.pipeline.constants import (
-    MLFLOW_CATEGORY_PIPELINE,
-    MLFLOW_SOURCE_ORCHESTRATOR,
     SEPARATOR_CHAR,
     SEPARATOR_LINE_WIDTH,
 )
@@ -99,8 +97,8 @@ if TYPE_CHECKING:
     from ryotenkai_control.pipeline.launch import PreparedAttempt
     from ryotenkai_control.pipeline.reporting import ExecutionSummaryReporter
     from ryotenkai_control.pipeline.stages.base import PipelineStage
-    from ryotenkai_control.pipeline.state import AttemptController
     from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
+    from ryotenkai_control.pipeline.state import AttemptController
     from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
     from ryotenkai_shared.utils.logs_layout import LogLayout
 
@@ -576,12 +574,10 @@ class StageExecutionLoop:
         logger.info(SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
 
         if mlflow_manager:
-            mlflow_manager.log_event_complete(
-                f"Pipeline completed successfully in {pipeline_duration:.1f}s",
-                category=MLFLOW_CATEGORY_PIPELINE,
-                source=MLFLOW_SOURCE_ORCHESTRATOR,
-                duration_seconds=pipeline_duration,
-            )
+            # Phase 7: ``log_event_complete`` removed. The pipeline
+            # lifecycle is captured via :class:`RunCompletedEvent` on
+            # the typed journal; tag + duration param are still set so
+            # downstream MLflow UI views don't regress.
             mlflow_manager.set_tags({"pipeline.status": "completed"})
             mlflow_manager.log_params({"pipeline.duration_seconds": pipeline_duration})
 
@@ -616,11 +612,10 @@ class StageExecutionLoop:
                     completed_at=completed_at,
                 )
         if mlflow_manager:
-            mlflow_manager.log_event_warning(
-                "Pipeline interrupted by user",
-                category=MLFLOW_CATEGORY_PIPELINE,
-                source=MLFLOW_SOURCE_ORCHESTRATOR,
-            )
+            # Phase 7: ``log_event_warning`` removed. The pipeline-
+            # interrupt signal is recorded as :class:`RunCancelledEvent`
+            # on the typed journal; the MLflow tag below is retained
+            # for backward compat with existing UI filters.
             mlflow_manager.set_tags({"pipeline.status": "interrupted"})
 
     def _handle_unexpected_error(
@@ -646,12 +641,10 @@ class StageExecutionLoop:
                 completed_at=completed_at,
             )
         if mlflow_manager:
-            mlflow_manager.log_event_error(
-                f"Unexpected error: {e!s}",
-                category=MLFLOW_CATEGORY_PIPELINE,
-                source=MLFLOW_SOURCE_ORCHESTRATOR,
-                error_type=type(e).__name__,
-            )
+            # Phase 7: ``log_event_error`` removed. Unexpected errors
+            # are recorded as :class:`RunFailedEvent` on the typed
+            # journal; the MLflow tag below is retained for legacy
+            # consumers.
             mlflow_manager.set_tags({"pipeline.status": _STATUS_FAILED})
 
     # ------------------------------------------------------------------
@@ -690,7 +683,7 @@ class StageExecutionLoop:
             self._attempt_controller.update_pod_status(
                 last_known_status=new_status,
             )
-        except Exception:  # noqa: BLE001 — defensive
+        except Exception:
             pass
 
     def _capture_pod_metadata_if_present(self, context: dict[str, Any]) -> None:
@@ -727,7 +720,7 @@ class StageExecutionLoop:
                 provider=provider_name,
                 last_known_status="running",
             )
-        except Exception:  # noqa: BLE001 — defensive
+        except Exception:
             # Persistence failure must not break the pipeline. Operator
             # forensics still see provider events; the resume hint is
             # the only thing lost.

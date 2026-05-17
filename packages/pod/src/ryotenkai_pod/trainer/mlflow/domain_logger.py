@@ -19,18 +19,9 @@ import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
-from ryotenkai_pod.trainer.constants import (
-    MLFLOW_CATEGORY_MEMORY,
-    MLFLOW_SEVERITY_ERROR,
-    MLFLOW_SEVERITY_INFO,
-    MLFLOW_SEVERITY_WARNING,
-    MLFLOW_SOURCE_MEMORY_MANAGER,
-)
 from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from ryotenkai_pod.trainer.mlflow.event_log import MLflowEventLog
     from ryotenkai_pod.trainer.mlflow.primitives import IMLflowPrimitives
     from ryotenkai_shared.config import PipelineConfig
 
@@ -39,23 +30,25 @@ logger = get_logger(__name__)
 
 class MLflowDomainLogger:
     """
-    Domain-specific logging facade over MLflow primitives and event log.
+    Domain-specific logging facade over MLflow primitives.
 
     Translates high-level domain events (training config, GPU metrics,
     pipeline stages, OOM events, etc.) into the correct MLflow calls.
 
+    Phase 7: the in-memory ``MLflowEventLog`` dependency was removed;
+    runtime events are now recorded on the typed event journal
+    (``events.jsonl``) and this class only writes
+    params/metrics/tags/dicts through the primitives.
+
     Args:
         primitives: MLflow logging primitives (log_params, log_metrics, set_tags, log_dict)
-        event_log: In-memory event log
     """
 
     def __init__(
         self,
         primitives: IMLflowPrimitives,
-        event_log: MLflowEventLog,
     ) -> None:
         self._p = primitives
-        self._event_log = event_log
 
     # =========================================================================
     # TRAINING CONFIG
@@ -313,16 +306,7 @@ class MLflowDomainLogger:
     # =========================================================================
 
     def log_gpu_detection(self, name: str, vram_gb: float, tier: str) -> None:
-        """Log GPU detection event and params."""
-        self._event_log.log_event(
-            MLFLOW_SEVERITY_INFO,
-            f"GPU detected: {name} ({vram_gb:.0f}GB)",
-            category=MLFLOW_CATEGORY_MEMORY,
-            source=MLFLOW_SOURCE_MEMORY_MANAGER,
-            gpu_name=name,
-            vram_gb=vram_gb,
-            tier=tier,
-        )
+        """Log GPU detection params (Phase 7: event-log path removed)."""
         self._p.log_params(
             {
                 "gpu_name": name,
@@ -338,56 +322,24 @@ class MLflowDomainLogger:
         total_mb: int,
         is_critical: bool,
     ) -> None:
-        """Log memory warning/critical event."""
-        level = "critical" if is_critical else "warning"
-        label = "CRITICAL" if is_critical else "WARNING"
-        self._event_log.log_event(
-            MLFLOW_SEVERITY_WARNING,
-            f"Memory {label}: {utilization_percent:.0f}% VRAM used",
-            category=MLFLOW_CATEGORY_MEMORY,
-            source=MLFLOW_SOURCE_MEMORY_MANAGER,
-            utilization_percent=utilization_percent,
-            used_mb=used_mb,
-            total_mb=total_mb,
-            level=level,
-        )
+        """Phase 7: ``MemoryPressureWarningEvent`` is the SSOT. No-op."""
+        del utilization_percent, used_mb, total_mb, is_critical
+        return
 
     def log_oom(self, operation: str, free_mb: int | None = None) -> None:
-        """Log OOM error event."""
-        msg = f"OOM during '{operation}'"
-        if free_mb is not None:
-            msg += f" (free: {free_mb}MB)"
-        self._event_log.log_event(
-            MLFLOW_SEVERITY_ERROR,
-            msg,
-            category=MLFLOW_CATEGORY_MEMORY,
-            source=MLFLOW_SOURCE_MEMORY_MANAGER,
-            operation=operation,
-            free_mb=free_mb,
-        )
+        """Phase 7: ``MemoryOOMDetectedEvent`` is the SSOT. No-op."""
+        del operation, free_mb
+        return
 
     def log_oom_recovery(self, operation: str, attempt: int, max_attempts: int) -> None:
-        """Log OOM recovery attempt."""
-        self._event_log.log_event(
-            MLFLOW_SEVERITY_WARNING,
-            f"OOM recovery attempt {attempt}/{max_attempts} for '{operation}'",
-            category=MLFLOW_CATEGORY_MEMORY,
-            source=MLFLOW_SOURCE_MEMORY_MANAGER,
-            operation=operation,
-            attempt=attempt,
-            max_attempts=max_attempts,
-        )
+        """Phase 7: typed events cover OOM recovery. No-op."""
+        del operation, attempt, max_attempts
+        return
 
     def log_cache_cleared(self, freed_mb: int) -> None:
-        """Log cache cleared event."""
-        if freed_mb > 0:
-            self._event_log.log_event(
-                MLFLOW_SEVERITY_INFO,
-                f"Cache cleared: {freed_mb}MB freed",
-                category="memory",
-                source="MemoryManager",
-                freed_mb=freed_mb,
-            )
+        """Phase 7: ``MemoryCacheClearedEvent`` is the SSOT. No-op."""
+        del freed_mb
+        return
 
     def log_memory_snapshot(
         self,
@@ -397,21 +349,15 @@ class MLflowDomainLogger:
         total_mb: int,
         utilization_percent: float,
     ) -> None:
-        """Log memory snapshot at key training phases."""
-        self._event_log.log_event(
-            MLFLOW_SEVERITY_INFO,
-            f"Memory [{phase}]: {used_mb}MB / {total_mb}MB ({utilization_percent:.1f}%)",
-            category=MLFLOW_CATEGORY_MEMORY,
-            source=MLFLOW_SOURCE_MEMORY_MANAGER,
-            phase=phase,
-            used_mb=used_mb,
-            free_mb=free_mb,
-            total_mb=total_mb,
-            utilization_percent=utilization_percent,
-        )
+        """Phase 7: typed memory events are the SSOT. No-op."""
+        del phase, used_mb, free_mb, total_mb, utilization_percent
+        return
 
     # =========================================================================
-    # PIPELINE / DATA BUFFER EVENTS
+    # PIPELINE / DATA BUFFER EVENTS — Phase 7: typed events on the
+    # journal are the SSOT; these helpers are kept as no-op stubs for
+    # legacy callers that still invoke them via the IMLflowManager
+    # facade.
     # =========================================================================
 
     def log_pipeline_initialized(
@@ -420,51 +366,24 @@ class MLflowDomainLogger:
         total_phases: int,
         strategy_chain: list[str],
     ) -> None:
-        """Log pipeline initialization event."""
-        chain_str = " -> ".join(s.upper() for s in strategy_chain)
-        self._event_log.log_event(
-            "start",
-            f"Pipeline initialized: {chain_str}",
-            category="training",
-            source="DataBuffer",
-            run_id=run_id,
-            total_phases=total_phases,
-            strategy_chain=strategy_chain,
-        )
+        """Phase 7 no-op. See module docstring."""
+        del run_id, total_phases, strategy_chain
+        return
 
     def log_state_saved(self, run_id: str, path: str) -> None:
-        """Log state save event."""
-        self._event_log.log_event(
-            "checkpoint",
-            "Pipeline state saved",
-            category="training",
-            source="DataBuffer",
-            run_id=run_id,
-            path=path,
-        )
+        """Phase 7 no-op."""
+        del run_id, path
+        return
 
     def log_checkpoint_cleanup(self, cleaned_count: int, freed_mb: int) -> None:
-        """Log checkpoint cleanup event."""
-        if cleaned_count > 0:
-            self._event_log.log_event(
-                "info",
-                f"Cleaned {cleaned_count} old checkpoints (~{freed_mb}MB freed)",
-                category="training",
-                source="DataBuffer",
-                cleaned_count=cleaned_count,
-                freed_mb=freed_mb,
-            )
+        """Phase 7 no-op."""
+        del cleaned_count, freed_mb
+        return
 
     def log_stage_start(self, stage_name: str, stage_idx: int, total_stages: int) -> None:
-        """Log pipeline stage start."""
-        self._event_log.log_event(
-            "start",
-            f"Stage {stage_idx + 1}/{total_stages}: {stage_name} started",
-            category="pipeline",
-            source=stage_name,
-            stage_idx=stage_idx,
-            total_stages=total_stages,
-        )
+        """Phase 7 no-op. ``StageStartedEvent`` is the SSOT."""
+        del stage_name, stage_idx, total_stages
+        return
 
     def log_stage_complete(
         self,
@@ -472,29 +391,14 @@ class MLflowDomainLogger:
         stage_idx: int,
         duration_seconds: float | None = None,
     ) -> None:
-        """Log pipeline stage completion."""
-        msg = f"Stage {stage_idx + 1}: {stage_name} completed"
-        if duration_seconds:
-            msg += f" ({duration_seconds:.1f}s)"
-        self._event_log.log_event(
-            "complete",
-            msg,
-            category="pipeline",
-            source=stage_name,
-            stage_idx=stage_idx,
-            duration_seconds=duration_seconds,
-        )
+        """Phase 7 no-op. ``StageCompletedEvent`` is the SSOT."""
+        del stage_name, stage_idx, duration_seconds
+        return
 
     def log_stage_failed(self, stage_name: str, stage_idx: int, error: str) -> None:
-        """Log pipeline stage failure."""
-        self._event_log.log_event(
-            "error",
-            f"Stage {stage_idx + 1}: {stage_name} failed: {error}",
-            category="pipeline",
-            source=stage_name,
-            stage_idx=stage_idx,
-            error=error,
-        )
+        """Phase 7 no-op. ``StageFailedEvent`` is the SSOT."""
+        del stage_name, stage_idx, error
+        return
 
     # =========================================================================
     # ENVIRONMENT

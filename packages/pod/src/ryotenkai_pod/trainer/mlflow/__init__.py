@@ -14,7 +14,6 @@ from typing import Any, Protocol, runtime_checkable
 from ryotenkai_pod.trainer.mlflow.autolog import MLflowAutologManager
 from ryotenkai_pod.trainer.mlflow.dataset_logger import MLflowDatasetLogger
 from ryotenkai_pod.trainer.mlflow.domain_logger import MLflowDomainLogger
-from ryotenkai_pod.trainer.mlflow.event_log import MLflowEventLog
 from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
 from ryotenkai_pod.trainer.mlflow.primitives import IMLflowPrimitives
 from ryotenkai_pod.trainer.mlflow.run_analytics import MLflowRunAnalytics
@@ -113,42 +112,8 @@ class IMLflowManager(Protocol):
         """Link dataset to current MLflow run."""
         ...
 
-    # Event Logging Methods
-    def log_event(
-        self,
-        event_type: str,
-        message: str,
-        *,
-        category: str = "info",
-        source: str = "system",
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Log a generic event."""
-        ...
-
-    def log_event_start(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        """Log start event."""
-        ...
-
-    def log_event_complete(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        """Log completion event."""
-        ...
-
-    def log_event_error(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        """Log error event."""
-        ...
-
-    def log_event_warning(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        """Log warning event."""
-        ...
-
-    def log_event_info(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        """Log info event."""
-        ...
-
-    def log_event_checkpoint(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        """Log checkpoint event."""
-        ...
+    # Phase 7: ``log_event*`` Protocol methods removed — typed events
+    # on the journal are the SSOT.
 
     def log_pipeline_initialized(self, run_id: str, total_phases: int, strategy_chain: list[str]) -> None:
         """Log pipeline initialization."""
@@ -196,7 +161,6 @@ __all__ = [
     "MLflowAutologManager",
     "MLflowDatasetLogger",
     "MLflowDomainLogger",
-    "MLflowEventLog",
     "MLflowModelRegistry",
     "MLflowRunAnalytics",
 ]

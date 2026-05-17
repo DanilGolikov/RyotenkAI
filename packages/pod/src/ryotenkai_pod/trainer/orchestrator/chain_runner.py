@@ -15,10 +15,10 @@ from ryotenkai_shared.utils.logger import logger
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
 
+    from ryotenkai_pod.trainer.container import IMLflowManager
     from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
     from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
     from ryotenkai_shared.config import StrategyPhaseConfig
-    from ryotenkai_pod.trainer.container import IMLflowManager
 
 
 class ChainRunner:
@@ -167,15 +167,10 @@ class ChainRunner:
         logger.debug(f"[CR:RUN_COMPLETE] run_id={buffer.run_id}, phases={total_phases}")
         logger.info(f"Training chain completed: {buffer.run_id}")
 
-        # Log event: chain completed via MLflow
+        # Phase 7: ``log_event_complete`` removed. The chain-complete
+        # signal is captured via :class:`TrainingCompletedEvent` on the
+        # typed journal; tag below is kept for legacy MLflow UI filters.
         if self._mlflow_manager is not None:
-            self._mlflow_manager.log_event_complete(
-                f"Training chain completed: {chain_str}",
-                category="training",
-                source="ChainRunner",
-                run_id=buffer.run_id,
-                total_phases=total_phases,
-            )
             self._mlflow_manager.set_tags({"status": "completed"})
 
         return current_model

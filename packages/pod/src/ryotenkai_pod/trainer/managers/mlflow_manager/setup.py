@@ -13,13 +13,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ryotenkai_pod.trainer.constants import MLFLOW_EXPERIMENT_DEFAULT_ID
+from ryotenkai_pod.trainer.mlflow.domain_logger import MLflowDomainLogger
+from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
 from ryotenkai_shared.errors import RyotenkAIError
 from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
 from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway, NullMLflowGateway
 from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
-from ryotenkai_pod.trainer.constants import MLFLOW_EXPERIMENT_DEFAULT_ID
-from ryotenkai_pod.trainer.mlflow.domain_logger import MLflowDomainLogger
-from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
 from ryotenkai_shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,7 +30,7 @@ class MLflowSetupMixin:
     Mixin: MLflow setup, connectivity, and subcomponent initialization.
 
     Assumes the following attributes exist on self (set by MLflowManager.__init__):
-      _mlflow_config, _mlflow, _gateway, _event_log, _autolog, _registry,
+      _mlflow_config, _mlflow, _gateway, _autolog, _registry,
       _analytics, _dataset_logger, _domain_logger, _run
     """
 
@@ -101,13 +101,11 @@ class MLflowSetupMixin:
                     if gateway_error is not None:
                         error_msg = f"{error_msg}: {gateway_error}"
                     logger.error(f"[MLFLOW] {error_msg}")
-                    self._event_log.log_event_error(  # type: ignore[attr-defined]
-                        error_msg,
-                        category="system",
-                        source="MLflowManager",
-                        error_type="ConnectionError",
-                        severity="ERROR",
-                    )
+                    # Phase 7: parallel ``_event_log.log_event_error``
+                    # call removed. The connectivity error is already
+                    # captured through ``last_connectivity_error`` and
+                    # the structured logger above; the typed-event path
+                    # owns lifecycle observability now.
                     self._mlflow = None  # type: ignore[attr-defined]
                     self._gateway = NullMLflowGateway()  # type: ignore[assignment]
                     return False
@@ -276,10 +274,7 @@ class MLflowSetupMixin:
 
         self._registry = MLflowModelRegistry(self._gateway, self._mlflow, log_model_enabled=False)  # type: ignore[attr-defined]
         self._dataset_logger = self._make_dataset_logger(mlflow_module=self._mlflow)  # type: ignore[attr-defined]
-        self._domain_logger = MLflowDomainLogger(  # type: ignore[attr-defined]
-            self,  # type: ignore[arg-type]
-            self._event_log,  # type: ignore[attr-defined]
-        )
+        self._domain_logger = MLflowDomainLogger(self)  # type: ignore[attr-defined,arg-type]
 
     def _load_description_file(self) -> str | None:
         """Load run description from file (custom or default template)."""

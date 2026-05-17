@@ -26,7 +26,6 @@ from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway
-    from ryotenkai_pod.trainer.mlflow.event_log import MLflowEventLog
 
 logger = get_logger(__name__)
 
@@ -35,11 +34,14 @@ class MLflowRunAnalytics:
     """
     MLflow run search, comparison and summary report generation.
 
+    Phase 7 removed the in-memory ``MLflowEventLog`` dependency — the
+    typed event journal is the SSOT, so the summary section no longer
+    pulls events from a parallel in-memory buffer.
+
     Args:
         gateway: MLflow gateway for client-based API access
         mlflow_module: The imported mlflow module (for search_runs)
         experiment_name: Default experiment name for searches
-        event_log: Event log instance for summary report events section
     """
 
     def __init__(
@@ -47,12 +49,10 @@ class MLflowRunAnalytics:
         gateway: IMLflowGateway,
         mlflow_module: Any,
         experiment_name: str | None = None,
-        event_log: MLflowEventLog | None = None,
     ) -> None:
         self._gateway = gateway
         self._mlflow = mlflow_module
         self._experiment_name = experiment_name
-        self._event_log = event_log
 
     def _resolve_experiment_name(self, experiment_name: str | None) -> str | None:
         return experiment_name or self._experiment_name
@@ -407,14 +407,13 @@ class MLflowRunAnalytics:
         lines.append(MLFLOW_MD_SEPARATOR)
         lines.append("")
 
-        # Events section — delegated to event_log if available
-        if self._event_log is not None:
-            lines.extend(self._event_log.generate_summary_section())
-        else:
-            lines.append("## Events Timeline")
-            lines.append("")
-            lines.append("*(Event log not available)*")
-            lines.append("")
+        # Phase 7: events timeline is owned by the typed journal /
+        # report adapter; this stub stays in place so existing report
+        # consumers don't see a missing header.
+        lines.append("## Events Timeline")
+        lines.append("")
+        lines.append("*(Events recorded in the typed journal artifact.)*")
+        lines.append("")
 
         # Results
         lines.append("## Results")

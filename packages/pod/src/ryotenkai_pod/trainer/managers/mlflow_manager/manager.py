@@ -3,7 +3,7 @@ MLflowManager — facade for MLflow experiment tracking.
 
 Owns only:
   - State: _mlflow, _run, _run_id, _parent_run_id, _nested_run_stack
-  - __init__: creates all 6 subcomponents
+  - __init__: creates all subcomponents
   - Properties: is_active, client, run_id, parent_run_id, is_nested
   - Cleanup: cleanup()
   - Delegation methods to all subcomponents
@@ -14,35 +14,37 @@ Behavior is implemented by mixins:
   - MLflowLoggingMixin     (logging_core.py)  — log_params(), log_metrics(), log_artifact(), etc.
 
 Subcomponents (src/training/mlflow/):
-  - MLflowEventLog        — in-memory event log
   - MLflowAutologManager  — autolog and tracing
   - MLflowModelRegistry   — model registration and aliases
   - MLflowDatasetLogger   — dataset logging
   - MLflowDomainLogger    — domain-specific log_* helpers
   - MLflowRunAnalytics    — run search, comparison, summary
+
+Phase 7 retired the legacy ``MLflowEventLog`` subcomponent and the
+matching ``log_event_*`` / ``log_events_artifact`` delegations — the
+typed event journal (``events.jsonl``) is the single source of truth.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway, NullMLflowGateway
 from ryotenkai_pod.trainer.managers.mlflow_manager.logging_core import MLflowLoggingMixin
 from ryotenkai_pod.trainer.managers.mlflow_manager.run_lifecycle import MLflowRunLifecycleMixin
 from ryotenkai_pod.trainer.managers.mlflow_manager.setup import MLflowSetupMixin
 from ryotenkai_pod.trainer.mlflow.autolog import MLflowAutologManager
 from ryotenkai_pod.trainer.mlflow.dataset_logger import MLflowDatasetLogger
 from ryotenkai_pod.trainer.mlflow.domain_logger import MLflowDomainLogger
-from ryotenkai_pod.trainer.mlflow.event_log import MLflowEventLog
 from ryotenkai_pod.trainer.mlflow.resilient_transport import ResilientMLflowTransport
 from ryotenkai_pod.trainer.mlflow.run_analytics import MLflowRunAnalytics
+from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway, NullMLflowGateway
 from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
-    from ryotenkai_shared.infrastructure.mlflow.uri_resolver import MLflowRuntimeRole, ResolvedMLflowUris
     from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
     from ryotenkai_shared.config import PipelineConfig
+    from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
+    from ryotenkai_shared.infrastructure.mlflow.uri_resolver import MLflowRuntimeRole, ResolvedMLflowUris
 
 logger = get_logger(__name__)
 
@@ -54,16 +56,6 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
     Implements IMLflowManager protocol (defined in src/utils/container.py).
     All subcomponents are created in setup() once the MLflow module is available.
     """
-
-    # Severity map exposed as ClassVar for backwards-compat (tests may read it).
-    _SEVERITY_MAP: ClassVar[dict[str, tuple[str, int]]] = {
-        "start": ("INFO", 9),
-        "complete": ("INFO", 9),
-        "info": ("INFO", 9),
-        "checkpoint": ("INFO", 9),
-        "warning": ("WARN", 13),
-        "error": ("ERROR", 17),
-    }
 
     def __init__(self, config: PipelineConfig, *, runtime_role: MLflowRuntimeRole = "control_plane") -> None:
         self.config = config
@@ -82,11 +74,10 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         # Mixin declares ``MLflowGateway`` (concrete class); we use the
         # interface for null-object pattern before setup completes.
         self._gateway: IMLflowGateway = NullMLflowGateway()  # type: ignore[assignment]
-        self._event_log = MLflowEventLog()
-        self._domain_logger: MLflowDomainLogger = MLflowDomainLogger(
-            self,  # type: ignore[arg-type]
-            self._event_log,
-        )
+        # Phase 7: MLflowEventLog retired; the typed event journal is
+        # the SSOT. Domain/run-analytics subcomponents no longer carry
+        # an event_log dependency.
+        self._domain_logger: MLflowDomainLogger = MLflowDomainLogger(self)  # type: ignore[arg-type]
         self._dataset_logger: MLflowDatasetLogger = self._make_dataset_logger(mlflow_module=None)
         self._autolog: MLflowAutologManager = MLflowAutologManager(
             mlflow_module=None,
@@ -98,7 +89,6 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
             self._gateway,
             None,
             experiment_name=None,
-            event_log=self._event_log,
         )
 
     # =========================================================================
@@ -247,49 +237,6 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         self._run_id = run_id
         self._parent_run_id = run_id
         return run
-
-    # =========================================================================
-    # EVENT LOG — delegate to MLflowEventLog
-    # =========================================================================
-
-    def log_event(
-        self,
-        event_type: str,
-        message: str,
-        *,
-        category: str = "training",
-        source: str = "",
-        **metadata: Any,
-    ) -> dict[str, Any]:
-        return self._event_log.log_event(event_type, message, category=category, source=source, **metadata)
-
-    def log_event_start(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        return self._event_log.log_event_start(message, **kwargs)
-
-    def log_event_complete(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        return self._event_log.log_event_complete(message, **kwargs)
-
-    def log_event_error(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        return self._event_log.log_event_error(message, **kwargs)
-
-    def log_event_warning(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        return self._event_log.log_event_warning(message, **kwargs)
-
-    def log_event_info(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        return self._event_log.log_event_info(message, **kwargs)
-
-    def log_event_checkpoint(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        return self._event_log.log_event_checkpoint(message, **kwargs)
-
-    def get_events(self, category: str | None = None) -> list[dict[str, Any]]:
-        return self._event_log.get_events(category)
-
-    def log_events_artifact(
-        self,
-        artifact_name: str = "training_events.json",
-        run_id: str | None = None,
-    ) -> bool:
-        return self._event_log.log_events_artifact(artifact_name, log_dict_fn=self.log_dict, run_id=run_id)
 
     # =========================================================================
     # AUTOLOG / TRACING — delegate to MLflowAutologManager
@@ -697,7 +644,6 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         self._run = None
         self._run_id = None
         self._mlflow = None
-        self._event_log.clear()
         self._autolog._mlflow = None
         self._autolog._tracking_uri = None
         self._registry = None

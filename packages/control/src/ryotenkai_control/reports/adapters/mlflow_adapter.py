@@ -2,7 +2,21 @@
 MLflow Adapter Implementation.
 
 Fetches data from MLflow and adapts it to Domain Entities.
-Handles all the "dirty work" of traversing run hierarchy and normalizing keys.
+Handles run hierarchy traversal, param normalization, and per-stage
+envelope artifact loading.
+
+Phase 7 (post Phase 6.a/b):
+  * No longer reads or downloads ``training_events.json`` — the typed
+    event journal (``events/events.jsonl``) is now the single source
+    of truth for runtime events, and is consumed by
+    :class:`ryotenkai_control.reports.adapters.journal_adapter.JournalReportAdapter`.
+  * Memory events are no longer reconstructed by string-sniffing
+    ``training_events.json``. The builder reads them from the
+    :class:`~ryotenkai_control.reports.domain.event_data.ExperimentEventData`
+    bag composed by the report generator.
+  * Stage envelopes (``*_results.json``) are still downloaded and
+    parsed here — these are stage-output artifacts independent of the
+    runtime event stream.
 """
 
 from __future__ import annotations
@@ -20,7 +34,6 @@ from mlflow.tracking import MlflowClient
 
 from ryotenkai_control.reports.domain.entities import (
     ExperimentData,
-    MemoryEvent,
     MetricHistory,
     PhaseData,
     RunStatus,
@@ -28,7 +41,6 @@ from ryotenkai_control.reports.domain.entities import (
 from ryotenkai_control.reports.domain.interfaces import IExperimentDataProvider
 from ryotenkai_shared.utils.logger import get_logger
 
-FILE_TRAINING_EVENTS = "training_events.json"
 KEY_BATCH_SIZE = "batch_size"
 KEY_END_TIME = "end_time"
 KEY_LEARNING_RATE = "learning_rate"
@@ -137,6 +149,11 @@ class MLflowAdapter(IExperimentDataProvider):
     def load(self, run_id: str) -> ExperimentData:
         """
         Load complete experiment data from MLflow run.
+
+        Phase 7: events (memory + timeline) are populated by
+        :class:`JournalReportAdapter` and merged in by
+        :class:`ExperimentReportGenerator`. This adapter no longer
+        downloads or parses ``training_events.json``.
         """
         from ryotenkai_control.pipeline.artifacts.base import StageArtifactEnvelope
 
@@ -147,19 +164,12 @@ class MLflowAdapter(IExperimentDataProvider):
         except Exception as e:
             raise ValueError(f"Run not found: {run_id}") from e
 
-        # 1. Fetch Artifacts (Events, Configs)
+        # 1. Fetch Artifacts (per-stage envelopes + YAML configs only)
         artifacts_dir = self._download_essential_artifacts(run_id)
 
-        # 2. Parse Global Training Events (Remote PC — still needed for phases/memory/gpu)
-        training_events = self._load_json_events(artifacts_dir / FILE_TRAINING_EVENTS)
-
-        # 3. Parse Per-Stage Envelope JSONs
+        # 2. Parse Per-Stage Envelope JSONs
         stage_envelopes: list[StageArtifactEnvelope] = []
         missing_artifacts: list[str] = []
-
-        # Check for old-style pipeline_events.json (backward compat for legacy runs)
-        legacy_pipeline_events = self._load_json_events(artifacts_dir / "pipeline_events.json")
-        all_events_for_memory = legacy_pipeline_events + training_events
 
         for artifact_name in STAGE_ARTIFACT_FILES:
             local_path = artifacts_dir / artifact_name
@@ -199,16 +209,13 @@ class MLflowAdapter(IExperimentDataProvider):
             elif stage == "inference_deployer":
                 inference_results = envelope.data
 
-        # 4. Parse Memory Events from training_events (primary) + legacy pipeline_events
-        memory_events = self._extract_memory_events(all_events_for_memory)
-
-        # 5. Parse Source Config
+        # 3. Parse Source Config
         source_config = self._load_yaml_config(artifacts_dir)
 
         # Capture Root Params (including config.*)
         root_params = self._normalize_params(root_run.data.params)
 
-        # 6. Find Training Context (Intermediate Run)
+        # 4. Find Training Context (Intermediate Run)
         training_run = self._find_training_run(run_id)
         training_params = training_run.data.params if training_run else {}
 
@@ -224,31 +231,25 @@ class MLflowAdapter(IExperimentDataProvider):
                     if hist:
                         resource_history[key] = hist
 
-        # 7. Build Phases
+        # 5. Build Phases — from MLflow child runs only.
         phases = self._build_phases(
             root_run,
             artifacts_dir,
-            training_events=training_events,
             root_params=root_params,
         )
 
-        # 8. Extract Hardware Info
-        combined_params = root_params.copy()
-        gpu_info = self._extract_gpu_info(all_events_for_memory, combined_params)
+        # 6. Extract Hardware Info from params (event-derived attribute
+        # discovery moved to the journal adapter / report builder).
+        gpu_info = self._extract_gpu_info_from_params(root_params)
 
-        # 9. Extract Model Info (Extra)
-        model_extra_info = self._extract_model_info(all_events_for_memory)
-        root_params.update(model_extra_info)
-
-        # 10. Construct ExperimentData
+        # 7. Construct ExperimentData. ``memory_events`` is populated by
+        # the journal adapter and merged at generation time; we seed an
+        # empty list here so the dataclass stays valid in isolation.
         start_time = datetime.fromtimestamp(root_run.info.start_time / 1000)
         end_time = datetime.fromtimestamp(root_run.info.end_time / 1000) if root_run.info.end_time else None
         duration = (end_time - start_time).total_seconds() if end_time else 0.0
 
         experiment = self._client.get_experiment(root_run.info.experiment_id)
-
-        if not training_events and not (artifacts_dir / FILE_TRAINING_EVENTS).exists():
-            missing_artifacts.append(FILE_TRAINING_EVENTS)
 
         return ExperimentData(
             run_id=run_id,
@@ -264,7 +265,7 @@ class MLflowAdapter(IExperimentDataProvider):
             source_config=source_config,
             root_params=root_params,
             resource_history=resource_history,
-            memory_events=memory_events,
+            memory_events=[],  # populated by JournalReportAdapter via generator
             stage_envelopes=stage_envelopes,
             validation_results=validation_results,
             evaluation_results=evaluation_results,
@@ -285,13 +286,18 @@ class MLflowAdapter(IExperimentDataProvider):
         root_run: Run,
         _artifacts_dir: Path,
         *,
-        training_events: list[dict[str, Any]] | None = None,
         root_params: dict[str, Any] | None = None,
     ) -> list[PhaseData]:
         """
         Traverse run hierarchy to build phases.
         Logic: Root -> Container (optional) -> Phases.
+
+        Phase 7: the legacy event-derived phase reconstruction (from
+        ``training_events.json``) was removed. Pipelines now always
+        log phases as MLflow child runs; the journal adapter is only
+        used for memory/timeline events, not phase metrics.
         """
+        del root_params  # kept on the call signature for backward compat with callers/tests
         phases: list[PhaseData] = []
 
         # Get all children (sorted by time)
@@ -324,149 +330,6 @@ class MLflowAdapter(IExperimentDataProvider):
 
             phase = self._run_to_phase_data(run, i)
             phases.append(phase)
-
-        # Fallback: Some pipelines log phase metrics only as structured training events
-        # (no nested MLflow child runs). In that case, reconstruct PhaseData from events.
-        if not phases and training_events and root_params is not None:
-            phases = self._build_phases_from_training_events(training_events, root_params)
-
-        return phases
-
-    @staticmethod
-    def _build_phases_from_training_events(
-        training_events: list[dict[str, Any]],
-        root_params: dict[str, Any],
-    ) -> list[PhaseData]:
-        """
-        Build phases from structured training events (PhaseExecutor/DataBuffer).
-
-        Expected event shapes (from training_events.json):
-        - PhaseExecutor start/complete with attributes.phase_idx and attributes.strategy_type
-        - complete contains scalar metrics: train_loss, epoch, global_step, train_runtime, ...
-        """
-        # Local import to avoid circulars at import time
-        from datetime import datetime
-
-        phases_by_idx: dict[int, dict[str, Any]] = {}
-
-        def parse_ts(ts_str: str | None) -> datetime | None:
-            if not ts_str:
-                return None
-            with suppress(ValueError):
-                return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            return None
-
-        for e in training_events:
-            attrs = e.get("attributes") or {}
-            if not isinstance(attrs, dict):
-                continue
-            if "phase_idx" not in attrs:
-                continue
-
-            phase_idx_raw = attrs.get("phase_idx")
-            if phase_idx_raw is None:
-                continue
-            try:
-                idx = int(phase_idx_raw)
-            except (TypeError, ValueError):
-                continue
-
-            src = str(e.get("source") or "")
-            etype = str(e.get("event_type") or "").lower()
-
-            rec = phases_by_idx.setdefault(
-                idx,
-                {
-                    "idx": idx,
-                    KEY_STRATEGY_TYPE: None,
-                    KEY_START_TIME: None,
-                    KEY_END_TIME: None,
-                    KEY_METRICS: {},
-                },
-            )
-
-            stype = attrs.get(KEY_STRATEGY_TYPE) or attrs.get("strategy")
-            if stype:
-                rec[KEY_STRATEGY_TYPE] = str(stype)
-
-            ts = parse_ts(e.get("timestamp"))
-
-            # Prefer PhaseExecutor events for timing/metrics
-            if src.startswith("PhaseExecutor") and etype == "start":
-                rec[KEY_START_TIME] = ts or rec.get(KEY_START_TIME)
-            elif src.startswith("PhaseExecutor") and etype == "complete":
-                rec[KEY_END_TIME] = ts or rec.get(KEY_END_TIME)
-
-                # Extract scalar metrics from attributes
-                for k in [
-                    "train_loss",
-                    "loss",
-                    "epoch",
-                    "global_step",
-                    "train_runtime",
-                    "train_samples_per_second",
-                    "train_steps_per_second",
-                    "learning_rate",
-                ]:
-                    if k in attrs and attrs[k] is not None:
-                        try:
-                            rec[KEY_METRICS][k] = float(attrs[k])
-                        except (TypeError, ValueError):
-                            continue
-
-        # Convert collected records into PhaseData list
-        phases: list[PhaseData] = []
-        for idx in sorted(phases_by_idx.keys()):
-            rec = phases_by_idx[idx]
-            stype_raw = (
-                rec.get(KEY_STRATEGY_TYPE) or root_params.get(f"config.strategy.{idx}.type") or KEY_UNKNOWN_LOWER
-            )
-            stype = str(stype_raw)
-
-            # Build config (minimal, but enough for builder + e2e tests)
-            phase_config: dict[str, Any] = {
-                KEY_STRATEGY_TYPE: stype.upper(),
-            }
-
-            # Prefer per-phase learning_rate from events, then from config.strategy.* hyperparams, then global lr
-            lr = (
-                rec.get(KEY_METRICS, {}).get(KEY_LEARNING_RATE)
-                or root_params.get(f"config.strategy.{idx}.hyperparams.learning_rate")
-                or root_params.get(KEY_LEARNING_RATE)
-            )
-            if lr is not None:
-                phase_config[KEY_LEARNING_RATE] = float(lr)
-
-            # Propagate batch size if available
-            bs = root_params.get(KEY_BATCH_SIZE) or root_params.get("training.hyperparams.per_device_train_batch_size")
-            if bs is not None:
-                with suppress(TypeError, ValueError):
-                    phase_config[KEY_BATCH_SIZE] = int(bs)
-
-            # Duration
-            start_time = rec.get(KEY_START_TIME)
-            end_time = rec.get(KEY_END_TIME)
-            duration = rec.get(KEY_METRICS, {}).get("train_runtime")
-            if duration is None and start_time and end_time:
-                duration = max(0.0, (end_time - start_time).total_seconds())
-            duration_seconds = float(duration or 0.0)
-
-            metrics = dict(rec.get(KEY_METRICS) or {})
-
-            phases.append(
-                PhaseData(
-                    idx=idx,
-                    name=f"phase_{idx}_{stype}",
-                    strategy=stype.upper(),
-                    status=RunStatus.FINISHED,
-                    duration_seconds=duration_seconds,
-                    start_time=start_time,
-                    end_time=end_time,
-                    config=phase_config,
-                    metrics=metrics,
-                    history={},
-                )
-            )
 
         return phases
 
@@ -628,14 +491,11 @@ class MLflowAdapter(IExperimentDataProvider):
             logger.warning(f"[ADAPTER] Failed to list artifacts for {run_id}: {e}")
             return temp_dir
 
-        # 2. Download training_events.json + legacy pipeline_events.json (backward compat)
-        essential_jsons = [FILE_TRAINING_EVENTS, "pipeline_events.json"]
-        for artifact in essential_jsons:
-            if artifact in available_artifacts or artifact in available_paths_flat:
-                try:
-                    self._client.download_artifacts(run_id, artifact, str(temp_dir))
-                except Exception as e:
-                    logger.warning(f"[ADAPTER] Failed to download {artifact}: {e}")
+        # 2. (Phase 7) ``training_events.json`` / ``pipeline_events.json``
+        # are no longer downloaded — the typed event journal
+        # (``events/events.jsonl``) is the SSOT and is consumed by
+        # :class:`JournalReportAdapter`. The block below intentionally
+        # left blank as a documentation breadcrumb.
 
         # 3. Download per-stage JSON artifacts
         for artifact_name in STAGE_ARTIFACT_FILES:
@@ -663,21 +523,6 @@ class MLflowAdapter(IExperimentDataProvider):
         return temp_dir
 
     @staticmethod
-    def _load_json_events(path: Path) -> list[dict[str, Any]]:
-        """Load events from JSON file."""
-        if not path.exists():
-            return []
-        try:
-            content = path.read_text()
-            data = json.loads(content)
-            events = data.get("events", [])
-            logger.debug(f"[ADAPTER] Loaded {len(events)} events from {path.name}")
-            return events
-        except Exception as e:
-            logger.warning(f"[ADAPTER] Failed to load events from {path}: {e}")
-            return []
-
-    @staticmethod
     def _load_yaml_config(temp_dir: Path) -> dict[str, Any]:
         """Load first available YAML config."""
         import yaml as yaml_module
@@ -691,96 +536,10 @@ class MLflowAdapter(IExperimentDataProvider):
         return {}
 
     @staticmethod
-    def _extract_memory_events(events: list[dict[str, Any]]) -> list[MemoryEvent]:
-        """Extract MemoryManager events."""
-        memory_events = []
-        for e in events:
-            if e.get("source") != "MemoryManager":
-                continue
-
-            # Parse timestamp safely
-            ts_str = e.get("timestamp")
-            ts = datetime.now()
-            if ts_str:
-                with suppress(ValueError):
-                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-
-            # Determine type
-            etype = e.get("event_type", "info")
-            msg = e.get(KEY_MESSAGE, "").lower()
-
-            if "cache cleared" in msg:
-                etype = "cache_clear"
-            elif "oom" in msg or "oom" in etype.lower():
-                etype = "oom"
-            elif etype in ("warning", "critical"):
-                pass
-
-            memory_events.append(
-                MemoryEvent(
-                    timestamp=ts,
-                    event_type=etype,
-                    message=e.get(KEY_MESSAGE, ""),
-                    phase=e.get("phase"),
-                    freed_mb=e.get("freed_mb"),
-                    utilization_percent=e.get("utilization_percent"),
-                    operation=e.get("operation"),
-                )
-            )
-
-        return memory_events
-
-    @staticmethod
-    def _extract_gpu_info(events: list[dict[str, Any]], params: dict[str, str]) -> dict[str, Any]:
-        """Extract GPU info from events or params."""
-        gpu_info = {}
-
-        # Try params first
+    def _extract_gpu_info_from_params(params: dict[str, Any]) -> dict[str, Any]:
+        """Extract GPU info from MLflow params (event-derived discovery
+        is now handled at the journal adapter / builder layer)."""
+        gpu_info: dict[str, Any] = {}
         if "mm.gpu_name" in params:
             gpu_info["name"] = params["mm.gpu_name"]
-
-        for e in events:
-            # 1. Try Structured Data (New format)
-            attrs = e.get("attributes", {})
-            if "gpu_name" in attrs:
-                gpu_info["name"] = attrs["gpu_name"]
-
-                # Support both key variants (MemoryManager vs RunTraining)
-                vram = attrs.get("total_vram_gb") or attrs.get("vram_gb")
-                if vram:
-                    gpu_info["total_vram"] = f"{vram:.1f}GB"
-                    gpu_info["total_vram_gb_raw"] = vram
-
-                tier = attrs.get("gpu_tier") or attrs.get("tier")
-                if tier:
-                    gpu_info["tier"] = tier
-
-                # If we found full info, break. Else keep searching for better event.
-                if vram and tier:
-                    break
-
         return gpu_info
-
-    @staticmethod
-    def _extract_model_info(events: list[dict[str, Any]]) -> dict[str, Any]:
-        """Extract model info from events."""
-        model_info = {}
-        for e in events:
-            # 1. Try Structured Data
-            attrs = e.get("attributes", {})
-            if "total_parameters" in attrs:
-                model_info["total_parameters"] = attrs["total_parameters"]
-                model_info["trainable_parameters"] = attrs.get("trainable_parameters")
-                model_info["trainable_percent"] = attrs.get("trainable_percent")
-                model_info["model_loading_time_seconds"] = attrs.get("model_loading_time_seconds")
-                # Don't return yet, look for other info
-
-            # 2. Extract Adapter Size from Model Retriever
-            if e.get("source") == "Model Retriever" and "Model size:" in e.get("message", ""):
-                import re
-
-                match = re.search(r"Model size: ([\d.]+) MB", e["message"])
-                if match:
-                    model_info["model_size_mb"] = float(match.group(1))
-
-        return model_info

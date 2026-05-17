@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer, DataBufferEventCallbacks, PhaseStatus
+from ryotenkai_pod.trainer.memory_manager import MemoryManager, get_memory_manager
 from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 from ryotenkai_pod.trainer.orchestrator.metrics_collector import MetricsCollector
 from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
@@ -37,13 +38,12 @@ from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
 from ryotenkai_shared.errors import StrategyChainInvalidError, TrainingFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_pod.trainer.memory_manager import MemoryManager, get_memory_manager
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
     from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
 
 
 class StrategyOrchestrator:
@@ -177,25 +177,19 @@ class StrategyOrchestrator:
                 self._mlflow_manager.log_state_saved(run_id, path)
 
         def _on_phase_started(idx: int, strategy: str) -> None:
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_start(
-                    f"Phase {idx} ({strategy}) started",
-                    category="training",
-                    source="DataBuffer",
-                    phase_idx=idx,
-                    strategy=strategy,
-                )
+            # Phase 7: per-phase ``log_event_start`` removed. Training
+            # lifecycle is captured via :class:`TrainingStartedEvent` on
+            # the typed journal; per-phase progress is observable through
+            # logger.info + MLflow tags set elsewhere.
+            del idx, strategy  # explicit no-op
+            return
 
         def _on_phase_completed(idx: int, strategy: str, status: str) -> None:
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_complete(
-                    f"Phase {idx} ({strategy}) {status}",
-                    category="training",
-                    source="DataBuffer",
-                    phase_idx=idx,
-                    strategy=strategy,
-                    status=status,
-                )
+            # Phase 7: per-phase ``log_event_complete`` removed. Training
+            # lifecycle is captured via :class:`TrainingCompletedEvent`
+            # on the typed journal.
+            del idx, strategy, status  # explicit no-op
+            return
 
         def _on_checkpoint_cleanup(cleaned_count: int, freed_mb: int) -> None:
             if self._mlflow_manager:

@@ -25,7 +25,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
     from contextlib import AbstractContextManager
 
     from ryotenkai_shared.errors import RyotenkAIError
@@ -112,12 +111,11 @@ class IMLflowManager(Protocol):
     ) -> bool: ...
 
     # ------------------------------------------------------------------
-    # Domain logging — events / config / provider
+    # Domain logging — config / provider
+    #
+    # Phase 7 removed the ``log_event_*`` surface. Typed events on the
+    # journal (``events.jsonl``) are the SSOT for runtime observability.
     # ------------------------------------------------------------------
-
-    def log_event_start(self, message: str, **kwargs: Any) -> dict[str, Any]: ...
-
-    def log_event_info(self, message: str, **kwargs: Any) -> dict[str, Any]: ...
 
     def log_pipeline_config(self, config: Any) -> None: ...
 

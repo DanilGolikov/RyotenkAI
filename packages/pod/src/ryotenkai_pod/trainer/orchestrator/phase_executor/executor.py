@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_pod.trainer.constants import CATEGORY_TRAINING
 from ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache import (
     AdapterCacheManager,
     _retry_call,
@@ -29,11 +28,11 @@ if TYPE_CHECKING:
 
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
+    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
     from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
     from ryotenkai_pod.trainer.orchestrator.metrics_collector import MetricsCollector
     from ryotenkai_pod.trainer.orchestrator.shutdown_handler import ShutdownHandler
     from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
-    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
 
 
 # Phase 9.A: error code emitted by ``PhaseTrainingRunner.handle_graceful_shutdown``.
@@ -223,14 +222,9 @@ class PhaseExecutor:
             buffer.mark_phase_started(phase_idx)
             logger.debug(f"[PE:START] phase={phase_idx}, strategy={phase.strategy_type}")
 
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_start(
-                    f"Phase {phase_idx} ({phase.strategy_type.upper()}) started",
-                    category=CATEGORY_TRAINING,
-                    source=f"PhaseExecutor:{phase_idx}",
-                    phase_idx=phase_idx,
-                    strategy_type=phase.strategy_type,
-                )
+            # Phase 7: ``log_event_start`` removed; phase start is
+            # captured via :class:`TrainingStartedEvent` from the
+            # trainer entrypoint.
 
             # 4-12. TRAINING (includes dataset loading, trainer creation, training, checkpointing)
             trained_model, final_checkpoint, metrics = self._training_runner.run(

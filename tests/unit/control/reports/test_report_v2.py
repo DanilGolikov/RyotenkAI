@@ -14,8 +14,10 @@ from mlflow.entities import Run, RunInfo
 
 from tests._factories.run_data import make_run_data
 
+from ryotenkai_control.reports.adapters.journal_adapter import JournalReportAdapter
 from ryotenkai_control.reports.adapters.mlflow_adapter import MLflowAdapter
-from ryotenkai_control.reports.domain.entities import RunStatus
+from ryotenkai_control.reports.domain.entities import MemoryEvent, RunStatus
+from ryotenkai_control.reports.domain.event_data import ExperimentEventData
 from ryotenkai_control.reports.report_generator import ExperimentReportGenerator
 
 # =============================================================================
@@ -32,10 +34,21 @@ def mock_mlflow_client(mocker):
 
 @pytest.fixture
 def mock_adapter_methods(mocker):
-    """Mock adapter internal methods for proper cleanup."""
-    json_mock = mocker.patch.object(MLflowAdapter, "_load_json_events", return_value=[])
+    """Mock adapter internal methods for proper cleanup.
+
+    Phase 7: ``_load_json_events`` was removed (events are now loaded
+    via the typed journal adapter). The fixture now stubs
+    :class:`JournalReportAdapter.load` to return an empty
+    :class:`ExperimentEventData` so tests don't need a real journal on
+    disk.
+    """
+    journal_mock = mocker.patch.object(
+        JournalReportAdapter,
+        "load",
+        return_value=ExperimentEventData(run_id=""),
+    )
     yaml_mock = mocker.patch.object(MLflowAdapter, "_load_yaml_config", return_value={})
-    return json_mock, yaml_mock
+    return journal_mock, yaml_mock
 
 
 @pytest.fixture(autouse=True)
@@ -144,19 +157,26 @@ class TestReportGenerationPositive:
         mock_mlflow_client.get_run.side_effect = get_run_side_effect
         mock_mlflow_client.search_runs.side_effect = search_runs_side_effect
 
-        # Mock adapter methods using mocker
-        mock_json = mocker.patch.object(MLflowAdapter, "_load_json_events")
-        mock_json.side_effect = [
-            [],  # pipeline events
-            [
-                {
-                    "source": "MemoryManager",
-                    "event_type": "oom",
-                    "message": "OOM detected",
-                    "timestamp": "2023-01-01T12:00:00Z",
-                }
-            ],
-        ]
+        # Phase 7: events are now loaded by the journal adapter, not via
+        # ``_load_json_events`` on the MLflow adapter. Stub the journal
+        # adapter to surface a single OOM event so the existing
+        # memory_management assertions still pass.
+        from datetime import datetime as _dt
+
+        mocker.patch.object(
+            JournalReportAdapter,
+            "load",
+            return_value=ExperimentEventData(
+                run_id="root_1",
+                memory_events=[
+                    MemoryEvent(
+                        timestamp=_dt(2023, 1, 1, 12, 0, 0),
+                        event_type="oom",
+                        message="OOM detected",
+                    )
+                ],
+            ),
+        )
         mocker.patch.object(MLflowAdapter, "_load_yaml_config", return_value={})
 
         # Execute
@@ -255,18 +275,32 @@ class TestReportGenerationBoundary:
         mock_mlflow_client.get_run.return_value = root
         mock_mlflow_client.search_runs.return_value = []
 
-        ooms = [{"source": "MemoryManager", "event_type": "oom", "message": f"OOM {i}"} for i in range(1000)]
+        # Phase 7: massive OOM is now produced by stubbing the journal
+        # adapter directly with typed MemoryEvent records.
+        from datetime import datetime as _dt
 
-        mocker.patch.object(MLflowAdapter, "_load_json_events", return_value=ooms)
+        memory_events = [
+            MemoryEvent(
+                timestamp=_dt(2023, 1, 1, 12, 0, 0),
+                event_type="oom",
+                message=f"OOM {i}",
+            )
+            for i in range(1000)
+        ]
+        mocker.patch.object(
+            JournalReportAdapter,
+            "load",
+            return_value=ExperimentEventData(run_id="root_oom", memory_events=memory_events),
+        )
         mocker.patch.object(MLflowAdapter, "_load_yaml_config", return_value={})
 
         generator = ExperimentReportGenerator("http://mock")
         report = generator.generate_report_model("root_oom")
 
-        assert len(report.memory_management.oom_events) == 2000
+        assert len(report.memory_management.oom_events) == 1000
         # Note: analyzer may return NEUTRAL status for memory events
         # The important thing is that events are collected
-        assert report.memory_management.oom_count == 2000
+        assert report.memory_management.oom_count == 1000
 
 
 # =============================================================================

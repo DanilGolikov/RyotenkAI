@@ -61,24 +61,19 @@ class StageInfoLogger:
             gpu_type=deployer_ctx.get("gpu_type"),
             resource_id=deployer_ctx.get("resource_id"),
         )
-        # NB: explicit ``is not None`` — a genuine 0 (instant upload/deps) is a
-        # valid value we still want to log; ``if upload_dur:`` would drop it.
+        # Phase 7: per-step ``log_event_info`` calls (upload / deps
+        # duration) removed — stage timing is now captured on the typed
+        # journal as :class:`StageCompletedEvent` payloads. Durations are
+        # still surfaced as MLflow params for backward UI compat.
         upload_dur = deployer_ctx.get(CTX_UPLOAD_DURATION)
         deps_dur = deployer_ctx.get("deps_duration_seconds")
+        deployment_params: dict[str, float] = {}
         if upload_dur is not None:
-            mlflow_manager.log_event_info(
-                f"Files uploaded ({upload_dur:.1f}s)",
-                category="deployment",
-                source=StageNames.GPU_DEPLOYER,
-                upload_duration_seconds=upload_dur,
-            )
+            deployment_params["deployment.upload_duration_seconds"] = float(upload_dur)
         if deps_dur is not None:
-            mlflow_manager.log_event_info(
-                f"Dependencies installed ({deps_dur:.1f}s)",
-                category="deployment",
-                source=StageNames.GPU_DEPLOYER,
-                deps_duration_seconds=deps_dur,
-            )
+            deployment_params["deployment.deps_duration_seconds"] = float(deps_dur)
+        if deployment_params:
+            mlflow_manager.log_params(deployment_params)
 
     @staticmethod
     def _log_dataset_validator(mlflow_manager: IMLflowManager, validator_ctx: Any) -> None:
@@ -111,16 +106,12 @@ class StageInfoLogger:
     def _log_training_monitor(mlflow_manager: IMLflowManager, monitor_ctx: Any) -> None:
         if not isinstance(monitor_ctx, dict):
             return
-        # NB: ``is not None`` — a converged run can have final_loss=0.0 / accuracy=0.0,
-        # and training_duration=0 should still produce a (trivial) event.
+        # Phase 7: training-completed log_event_info removed; the trainer
+        # already emits :class:`TrainingCompletedEvent` on the typed
+        # journal. Duration is surfaced as an MLflow metric below.
         training_dur = monitor_ctx.get(CTX_TRAINING_DURATION)
         if training_dur is not None:
-            mlflow_manager.log_event_info(
-                f"Training completed ({training_dur:.1f}s)",
-                category="training",
-                source=StageNames.TRAINING_MONITOR,
-                training_duration_seconds=training_dur,
-            )
+            mlflow_manager.log_metrics({"training.duration_seconds": float(training_dur)})
 
         training_info = monitor_ctx.get(CTX_TRAINING_INFO, {})
         if not isinstance(training_info, dict) or not training_info:
@@ -141,28 +132,19 @@ class StageInfoLogger:
     def _log_model_retriever(mlflow_manager: IMLflowManager, retriever_ctx: Any) -> None:
         if not isinstance(retriever_ctx, dict):
             return
-        # NB: ``is not None`` — model_size_mb=0 (empty model, edge case in tests)
-        # should still be emitted rather than silently dropped.
+        # Phase 7: model-info ``log_event_info`` calls removed; model
+        # size + HF upload metadata are now surfaced as MLflow metrics /
+        # tags below. The typed journal carries the lifecycle.
         model_size = retriever_ctx.get("model_size_mb")
         if model_size is not None:
-            mlflow_manager.log_event_info(
-                f"Model size: {model_size:.1f} MB",
-                category="model",
-                source=StageNames.MODEL_RETRIEVER,
-                model_size_mb=model_size,
-            )
+            mlflow_manager.log_metrics({"model.size_mb": float(model_size)})
 
         hf_uploaded = retriever_ctx.get("hf_uploaded")
         upload_dur = retriever_ctx.get(CTX_UPLOAD_DURATION)
         if hf_uploaded and upload_dur is not None:
             hf_repo = retriever_ctx.get("hf_repo_id", CTX_PROVIDER_NAME_UNKNOWN)
-            mlflow_manager.log_event_info(
-                f"Model uploaded to HF: {hf_repo} ({upload_dur:.1f}s)",
-                category="model",
-                source=StageNames.MODEL_RETRIEVER,
-                hf_repo_id=hf_repo,
-                upload_duration_seconds=upload_dur,
-            )
+            mlflow_manager.set_tags({"model.hf_repo_id": str(hf_repo)})
+            mlflow_manager.log_metrics({"model.upload_duration_seconds": float(upload_dur)})
 
 
 __all__ = ["StageInfoLogger"]

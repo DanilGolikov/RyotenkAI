@@ -19,11 +19,9 @@ from typing import TYPE_CHECKING, Any
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from ryotenkai_pod.trainer.constants import (
-    CATEGORY_TRAINING,
     TAG_PHASE_IDX,
     TAG_STRATEGY_TYPE,
     TRUNCATE_ERROR_MSG,
-    TRUNCATE_ERROR_SHORT,
 )
 from ryotenkai_pod.trainer.memory_manager import MemoryManager, OOMRecoverableError
 from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
@@ -130,14 +128,9 @@ class PhaseTrainingRunner:
                 f"   Dataset loaded: {len(train_dataset) if hasattr(train_dataset, '__len__') else '?'} samples"
             )
 
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_info(
-                    f"Dataset prepared: {len(train_dataset)} samples",
-                    category=CATEGORY_TRAINING,
-                    source=f"PhaseExecutor:{phase_idx}",
-                    phase_idx=phase_idx,
-                    samples=len(train_dataset),
-                )
+            # Phase 7: ``log_event_info`` removed; dataset preparation
+            # is observable via ``_log_dataset`` (MLflow params/metrics)
+            # and ``logger.info`` above.
 
             self._log_dataset(phase_idx, train_dataset, phase)
 
@@ -170,18 +163,10 @@ class PhaseTrainingRunner:
                 metrics=metrics,
             )
 
-            if self._mlflow_manager:
-                train_loss = metrics.train_loss
-                self._mlflow_manager.log_event_complete(
-                    f"Phase {phase_idx} ({phase.strategy_type.upper()}) completed"
-                    + (f", loss={train_loss:.4f}" if train_loss else ""),
-                    category=CATEGORY_TRAINING,
-                    source=f"PhaseExecutor:{phase_idx}",
-                    phase_idx=phase_idx,
-                    strategy_type=phase.strategy_type,
-                    checkpoint=str(final_checkpoint),
-                    **metrics.numeric_kwargs(),
-                )
+            # Phase 7: ``log_event_complete`` removed. Phase completion
+            # is captured via :class:`TrainingCompletedEvent` on the
+            # typed journal; metrics flow through MLflow autolog +
+            # log_metrics elsewhere in the trainer.
 
             buffer.cleanup_old_checkpoints(keep_last=2)
 
@@ -359,13 +344,9 @@ class PhaseTrainingRunner:
         logger.info(f"   Checkpoint saved: {final_checkpoint}")
         logger.debug(f"[PE:CHECKPOINT_SAVED] path={final_checkpoint}")
 
-        if self._mlflow_manager:
-            self._mlflow_manager.log_event_checkpoint(
-                f"Checkpoint saved: {final_checkpoint.name}",
-                category=CATEGORY_TRAINING,
-                source="PhaseExecutor",
-                path=str(final_checkpoint),
-            )
+        # Phase 7: ``log_event_checkpoint`` removed. Checkpoints are
+        # captured via :class:`TrainingCheckpointSavedEvent` on the
+        # typed journal (emitted from the trainer callback layer).
 
         return final_checkpoint
 
@@ -435,13 +416,9 @@ class PhaseTrainingRunner:
 
         logger.warning(f"[PE:GRACEFUL_SHUTDOWN] phase={phase_idx}{shutdown_info}")
 
-        if self._mlflow_manager:
-            self._mlflow_manager.log_event_warning(
-                f"Phase {phase_idx} interrupted{shutdown_info}",
-                category=CATEGORY_TRAINING,
-                source=f"PhaseExecutor:{phase_idx}",
-                phase_idx=phase_idx,
-            )
+        # Phase 7: ``log_event_warning`` removed. Interrupts surface as
+        # :class:`TrainingFailedError` below (caught by the trainer
+        # entrypoint which emits :class:`TrainingFailedEvent`).
 
         checkpoint_path: str | None = None
 
@@ -499,14 +476,9 @@ class PhaseTrainingRunner:
         buffer.mark_phase_failed(phase_idx, error_msg)
 
         if self._mlflow_manager:
-            self._mlflow_manager.log_event_error(
-                f"Phase {phase_idx} failed: {error_type}",
-                category=CATEGORY_TRAINING,
-                source=f"PhaseExecutor:{phase_idx}",
-                phase_idx=phase_idx,
-                error_type=error_type,
-                error=str(error)[:TRUNCATE_ERROR_SHORT],
-            )
+            # Phase 7: ``log_event_error`` removed. Phase failures are
+            # captured via :class:`TrainingFailedEvent` on the typed
+            # journal; MLflow tags below stay for legacy filters.
             self._mlflow_manager.set_tags(
                 {
                     TAG_PHASE_IDX: str(phase_idx),

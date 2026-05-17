@@ -2,7 +2,16 @@
 Experiment Report Generator (v2).
 
 Main facade for report generation using Domain-Centric architecture.
-Architecture: MLflow -> Adapter -> Domain Data -> Builder -> Report.
+Architecture:
+    MLflow             -> MLflowAdapter        -> ExperimentData (metadata)
+    events.jsonl       -> JournalReportAdapter -> ExperimentEventData
+    [composed]         -> ReportBuilder        -> Report
+
+Phase 7 split the adapter layer: MLflow metadata (params/tags/metric
+history/stage envelopes) is still loaded by :class:`MLflowAdapter`,
+but the runtime event stream (memory + timeline) is now provided by
+:class:`JournalReportAdapter`, reading the typed event journal written
+during the run.
 """
 
 from __future__ import annotations
@@ -15,6 +24,7 @@ import mlflow
 from mlflow.tracking import MlflowClient
 
 from ryotenkai_community.catalog import catalog
+from ryotenkai_control.reports.adapters.journal_adapter import JournalReportAdapter
 from ryotenkai_control.reports.adapters.mlflow_adapter import MLflowAdapter
 from ryotenkai_control.reports.core.builder import ReportBuilder
 from ryotenkai_control.reports.plugins.composer import ReportComposer
@@ -24,10 +34,11 @@ from ryotenkai_control.reports.plugins.registry import build_report_plugins
 from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway
     from ryotenkai_control.reports.domain.entities import ExperimentData
     from ryotenkai_control.reports.domain.interfaces import IExperimentDataProvider
     from ryotenkai_control.reports.models.report import ExperimentReport
+    from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway
+    from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
 
 logger = get_logger(__name__)
 
@@ -43,6 +54,8 @@ class ExperimentReportGenerator:
         *,
         gateway: IMLflowGateway | None = None,
         adapter: IExperimentDataProvider | None = None,
+        journal_adapter: JournalReportAdapter | None = None,
+        mlflow_manager: IMLflowManager | None = None,
         plugins: list[IReportBlockPlugin] | None = None,
         sections: Sequence[str] | None = None,
     ):
@@ -50,13 +63,19 @@ class ExperimentReportGenerator:
         Initialize generator.
 
         Args:
-            tracking_uri: MLflow tracking URI (legacy, used when gateway is not provided)
-            gateway:      IMLflowGateway instance. Takes precedence over tracking_uri.
-            adapter:      Data provider (defaults to MLflowAdapter)
-            plugins:      Ordered list of report block plugins (escape hatch for tests).
-                          If passed, ``sections`` is ignored.
-            sections:     Ordered list of plugin ids to render. ``None`` uses the
-                          built-in default (see ``DEFAULT_REPORT_SECTIONS``).
+            tracking_uri:     MLflow tracking URI (legacy, used when gateway is not provided).
+            gateway:          IMLflowGateway instance. Takes precedence over tracking_uri.
+            adapter:          MLflow metadata provider (defaults to MLflowAdapter).
+            journal_adapter:  Event-journal provider (defaults to JournalReportAdapter
+                              bound to ``mlflow_manager`` for the artifact fallback path).
+            mlflow_manager:   IMLflowManager used by the journal adapter for the
+                              MLflow-artifact fallback when the workspace journal is
+                              missing. Optional; the adapter degrades to "empty
+                              events" when both are unavailable.
+            plugins:          Ordered list of report block plugins (escape hatch for tests).
+                              If passed, ``sections`` is ignored.
+            sections:         Ordered list of plugin ids to render. ``None`` uses the
+                              built-in default (see ``DEFAULT_REPORT_SECTIONS``).
         """
         if gateway is not None:
             self._tracking_uri = gateway.uri
@@ -70,6 +89,8 @@ class ExperimentReportGenerator:
             self._adapter = adapter or MLflowAdapter(tracking_uri)
         else:
             raise ValueError("Either tracking_uri or gateway must be provided")
+
+        self._journal_adapter = journal_adapter or JournalReportAdapter(mlflow_manager=mlflow_manager)
 
         if plugins is None:
             catalog.ensure_loaded()
@@ -95,6 +116,12 @@ class ExperimentReportGenerator:
 
         # 1. Fetch Data (Adapter Layer)
         data: ExperimentData = self._adapter.load(run_id)
+
+        # 1b. Merge journal-derived events into the experiment data so
+        # the builder can render the timeline + memory-management section.
+        workspace_dir = local_logs_dir if local_logs_dir else None
+        event_data = self._journal_adapter.load(run_id, workspace_dir=workspace_dir)
+        data.memory_events = event_data.memory_events
 
         # 2. Build Report (Domain -> View)
         builder = ReportBuilder(data)
@@ -128,6 +155,8 @@ class ExperimentReportGenerator:
     def generate_report_model(self, run_id: str) -> ExperimentReport:
         """Generate report model without rendering."""
         data = self._adapter.load(run_id)
+        event_data = self._journal_adapter.load(run_id)
+        data.memory_events = event_data.memory_events
         return ReportBuilder(data).build()
 
     def generate_for_latest(

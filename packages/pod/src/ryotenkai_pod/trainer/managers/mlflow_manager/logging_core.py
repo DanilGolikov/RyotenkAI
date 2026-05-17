@@ -155,28 +155,6 @@ class MLflowLoggingMixin:
         self.set_tags({key: value})  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
-    # Summary artifact
-    # ------------------------------------------------------------------
-
-    def log_summary_artifact(
-        self,
-        events_artifact_name: str = "training_events.json",
-        parent_run_id: str | None = None,
-    ) -> bool:
-        """Generate and log summary as MLflow artifact."""
-        target_run_id = self._get_active_run_id(parent_run_id)  # type: ignore[attr-defined]
-        try:
-            events_ok = self.log_events_artifact(events_artifact_name, run_id=target_run_id)  # type: ignore[attr-defined]
-            if events_ok:
-                logger.info("[MLFLOW:SUMMARY] Events artifact logged")
-                return True
-            logger.warning("[MLFLOW:SUMMARY] No artifacts were logged")
-            return False
-        except Exception as e:
-            logger.warning(f"[MLFLOW:SUMMARY] Failed to log summary: {e}")
-            return False
-
-    # ------------------------------------------------------------------
     # LLM evaluation
     # ------------------------------------------------------------------
 

@@ -26,7 +26,6 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_control.pipeline.constants import MLFLOW_CATEGORY_PIPELINE, MLFLOW_SOURCE_ORCHESTRATOR
 from ryotenkai_control.pipeline.stages import PipelineContextKeys
 from ryotenkai_shared.errors import (
     ConfigInvalidError,
@@ -217,11 +216,8 @@ class MLflowAttemptManager:
         manager = self._require_manager()
         context[PipelineContextKeys.MLFLOW_PARENT_RUN_ID] = self.get_run_id()
         context[PipelineContextKeys.MLFLOW_MANAGER] = manager
-        manager.log_event_start(
-            "Pipeline attempt started",
-            category=MLFLOW_CATEGORY_PIPELINE,
-            source=MLFLOW_SOURCE_ORCHESTRATOR,
-        )
+        # Phase 7: ``log_event_start`` removed. Pipeline-attempt start
+        # is recorded on the typed journal as :class:`RunStartedEvent`.
         manager.log_pipeline_config(self._config)
         manager.log_dataset_config(self._config)
         manager.log_params(
