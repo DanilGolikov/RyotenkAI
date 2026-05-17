@@ -229,18 +229,33 @@ def _extract_attempt_fields(
     return out
 
 
-def _pipeline_log_attached() -> bool:
-    """True iff :func:`init_run_logging` has attached the aggregated handler.
+def _pipeline_was_opened() -> bool:
+    """True iff a pipeline.log file handler was attached during this process.
 
-    Phase H3 — Detect "the worker reached the orchestrator and the
-    attempt directory exists" so the exception handler can decide
-    whether to also write the init_error.log fallback.
+    Phase H3 — Worker reads this after catching an exception to decide
+    whether to write the ``init_error.log`` fallback. ``False`` means
+    "the failure happened before the orchestrator opened pipeline.log,
+    so the operator can only postmortem through init_error.log".
+
+    Implementation: thin proxy for
+    :func:`ryotenkai_shared.utils.logger.was_pipeline_log_ever_opened`
+    — a sticky flag set by ``_attach_pipeline_file_handler`` and never
+    reset. Cannot use ``_pipeline_file_handler`` directly because the
+    orchestrator detaches the handler in its cleanup ``finally`` block
+    before control returns here, falsely suggesting "pre-pipeline
+    failure" for in-stage failures.
     """
-    # Import the MODULE (not the ``logger`` object) so we can read the
-    # private ``_pipeline_file_handler`` module-level singleton.
-    import ryotenkai_shared.utils.logger as logger_module
+    # Import via ``sys.modules`` to bypass the ``utils/__init__``
+    # re-export which would otherwise shadow the submodule with the
+    # ``logger`` object.
+    import sys
 
-    return getattr(logger_module, "_pipeline_file_handler", None) is not None
+    mod = sys.modules.get("ryotenkai_shared.utils.logger")
+    if mod is None:
+        import importlib
+
+        mod = importlib.import_module("ryotenkai_shared.utils.logger")
+    return bool(getattr(mod, "_pipeline_file_was_ever_attached", False))
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +582,7 @@ def main(argv: list[str] | None = None) -> int:
         # error: missing secrets, bad config, launch rejection before
         # ``init_run_logging``) write the structured failure to
         # ``init_error.log`` so the operator still has a postmortem.
-        if runs_base is not None and not _pipeline_log_attached():
+        if runs_base is not None and not _pipeline_was_opened():
             _write_init_error(
                 runs_base / "init_error.log",
                 exc,
@@ -601,7 +616,7 @@ def main(argv: list[str] | None = None) -> int:
             code=internal.code.value,
             title=internal.title,
         )
-        if runs_base is not None and not _pipeline_log_attached():
+        if runs_base is not None and not _pipeline_was_opened():
             _write_init_error(
                 runs_base / "init_error.log",
                 exc,

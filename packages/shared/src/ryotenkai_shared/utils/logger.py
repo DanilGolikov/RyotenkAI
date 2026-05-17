@@ -325,6 +325,16 @@ _run_log_dir: Path | None = None
 _run_log_layout: LogLayout | None = None
 _pipeline_file_handler: logging.FileHandler | None = None
 
+# Sticky flag — set ``True`` the first time
+# :func:`_attach_pipeline_file_handler` runs in this process, and NEVER
+# reset. Phase H3 worker exception handler reads this to decide whether
+# the failure happened BEFORE pipeline.log was opened (write
+# init_error.log fallback) or AFTER (don't — H1 summary already in
+# pipeline.log). Cannot use ``_pipeline_file_handler`` for this because
+# the orchestrator detaches it during cleanup before control returns
+# to the worker's exception handler.
+_pipeline_file_was_ever_attached: bool = False
+
 # Third-party libraries that spam INFO/DEBUG without useful signal.
 # Quieted at run-logging init so pipeline.log / stage.log stay readable.
 _NOISY_LIBRARIES: tuple[str, ...] = ("httpx", "urllib3", "filelock", "botocore")
@@ -386,7 +396,29 @@ def _attach_pipeline_file_handler(log_file: Path) -> logging.FileHandler:
         root.setLevel(_log_level)
 
     _pipeline_file_handler = handler
+    # Mark the sticky flag the first time — never reset across the
+    # lifetime of this process. Phase H3 worker handler reads it via
+    # :func:`was_pipeline_log_ever_opened`.
+    global _pipeline_file_was_ever_attached
+    _pipeline_file_was_ever_attached = True
     return handler
+
+
+def was_pipeline_log_ever_opened() -> bool:
+    """Public accessor for the sticky "pipeline.log was attached" flag.
+
+    Phase H3 — worker exception handler calls this to decide whether
+    the failure happened before pipeline.log was opened (in which case
+    write init_error.log) or after (don't — H1 summary already in
+    pipeline.log).
+
+    Module-attribute access from outside is intentionally avoided
+    because ``ryotenkai_shared.utils.__init__`` re-exports the
+    :class:`Logger` *object* under the name ``logger``, which shadows
+    the submodule on attribute lookup. A function-level accessor sees
+    the actual module global reliably.
+    """
+    return _pipeline_file_was_ever_attached
 
 
 def set_log_level(level_name: str) -> logging.Logger:
