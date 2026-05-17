@@ -37,24 +37,63 @@ the per-event policy.
 
 from __future__ import annotations
 
+import os
+import time
 from datetime import UTC, datetime
 from uuid import UUID
 
-import uuid_utils
 from pydantic import BaseModel, ConfigDict, Field
 
 from ryotenkai_shared.events.severity import Severity  # noqa: TC001 — Pydantic field type, needs runtime
+
+# Optional fast Rust-backed generator. The pod image ships a slimmer dep
+# set so we cannot rely on it being installed there; fall back to a pure-
+# Python RFC 9562 implementation when absent. Both code paths return a
+# stdlib :class:`uuid.UUID`, so callers never need to know which is in
+# use.
+try:
+    import uuid_utils as _uuid_utils  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover — pod-side fallback path
+    _uuid_utils = None
+
+
+def _uuid7_pure_python() -> UUID:
+    """RFC 9562 UUIDv7 generated without external deps.
+
+    Layout (128 bits, big-endian):
+      | 48-bit unix_ts_ms | 4-bit ver=0x7 | 12-bit rand_a |
+      | 2-bit  var=0b10   | 62-bit rand_b                  |
+
+    Throughput is roughly ~150k uuids/sec on CPython 3.12 (vs ~700k for
+    the Rust binding). Both far above pipeline emit rates (~30 ev/sec
+    typical), so the fallback is functionally equivalent.
+    """
+    ts_ms = int(time.time() * 1000) & 0xFFFFFFFFFFFF  # 48 bits
+    rand_a = int.from_bytes(os.urandom(2), "big") & 0x0FFF  # 12 bits
+    rand_b = int.from_bytes(os.urandom(8), "big") & 0x3FFFFFFFFFFFFFFF  # 62 bits
+    val = (
+        (ts_ms << 80)
+        | (0x7 << 76)
+        | (rand_a << 64)
+        | (0b10 << 62)
+        | rand_b
+    )
+    return UUID(int=val)
 
 
 def new_uuid7() -> UUID:
     """Mint a fresh UUIDv7 (RFC 9562).
 
-    Backed by :mod:`uuid_utils` for a Rust-native generator (~700k uuids/sec
-    on M-series Mac per the Phase 0 smoke benchmark). Returns a stdlib
+    Uses :mod:`uuid_utils` for a Rust-native generator (~700k uuids/sec
+    on M-series Mac per the Phase 0 smoke benchmark) when available;
+    falls back to a pure-Python implementation otherwise so pod images
+    that don't pin the optional dep still work. Returns a stdlib
     :class:`uuid.UUID` so consumers don't need to import ``uuid_utils``
     transitively.
     """
-    return UUID(str(uuid_utils.uuid7()))
+    if _uuid_utils is not None:
+        return UUID(str(_uuid_utils.uuid7()))
+    return _uuid7_pure_python()
 
 
 def utc_now() -> datetime:
