@@ -64,6 +64,42 @@ production code, the following MUST happen:
    - [docs/testing/mutation_testing.md](../docs/testing/mutation_testing.md)
    - [docs/migration/xfail_debt.md](../docs/migration/xfail_debt.md)
 
+## Event system (typed envelopes + SSOT journal)
+
+The pipeline emits typed events via the `IEventEmitter` Protocol. The
+single source of truth is a length-prefixed JSONL journal at
+`workspace/runs/<run_id>/events.jsonl`; a sha256-checked copy is
+uploaded to MLflow on run finalize. See:
+
+- ADR-0009: [docs/adrs/2026-05-17-unified-event-system.md](../docs/adrs/2026-05-17-unified-event-system.md)
+- shared/events README: [packages/shared/src/ryotenkai_shared/events/README.md](../packages/shared/src/ryotenkai_shared/events/README.md)
+- control/events README: [packages/control/src/ryotenkai_control/events/README.md](../packages/control/src/ryotenkai_control/events/README.md)
+
+How to emit from a stage:
+
+```python
+with self._emitter.stage_scope("training_monitor"):
+    self._emitter.emit(TrainingMonitorStartedEvent(
+        source="control://orchestrator/training_monitor",
+        run_id=self._run_id, offset=0, payload=...,
+    ))
+```
+
+When you add a new event type:
+
+- Pick a `kind` matching `ryotenkai.<area>.<domain>.<verb>`; pin `kind`
+  and `severity` via `Literal` defaults on the event class.
+- Register the class in `packages/shared/.../events/discriminator.py`
+  (the `Union[...]` block) AND re-export it from `types/__init__.py`.
+- Add a test file under `tests/unit/shared/events/types/` covering
+  positive round-trip, `extra="forbid"` rejection, and the `kind` /
+  `severity` Literal pins (the `test_every_module_has_tests` sentinel
+  enforces the file's existence).
+
+Do NOT mock `IEventEmitter` in tests — use the canonical fake at
+`tests/_fakes/event_emitter.py` (the `test_no_protocol_mocking`
+sentinel enforces this).
+
 <!-- Add your custom instructions below. Repowise will never modify anything outside the REPOWISE markers. -->
 <!-- Examples: coding style rules, test commands, workflow preferences, constraints -->
 
@@ -75,39 +111,44 @@ production code, the following MUST happen:
 > (documentation, ownership, history, decisions). **Always verify against
 > actual source files before making changes** — the index may be stale.
 
-Last indexed: 2026-04-26 (commit 2ed2989). Confidence: 100%.
+Last indexed: 2026-05-16 (commit 2f33c13). Confidence: 100%.
 ### Architecture
-repo is a robust, Python-centric project designed for high-performance machine learning workflows, evaluation, and API-driven data processing. With a codebase spanning nearly 200,000 lines, the project integrates a sophisticated backend orchestration layer with a modern TypeScript-based web interface. The repository is structured to support both CLI-based operations and long-running server processes, making it a versatile tool for ML pipeline management and evaluation tasks. *   **Primary Language:** Python (76.3%) – Used for core logic, API services, and pipeline orchestration.
+repo is a robust, multi-package monorepo designed for scalable orchestration and community-driven evaluation. With over 347,000 lines of code, the project leverages a Python-heavy architecture to manage complex workflows, infrastructure control, and data processing, complemented by a TypeScript-based web interface for user interaction and visualization. The repository is structured to separate core logic, provider integrations, and community-specific evaluation tools, ensuring modularity and maintainability. The project utilizes a modern, polyglot stack optimized for high-performance backend operations and reactive frontend development:
+
+*   **Core Language:** Python (77.2%) – Powers the primary business logic, orchestration, and infrastructure management.
 ### Key Modules
 | Module | Purpose | Owner |
 |--------|---------|-------|
-| `src` | The src module serves as the core codebase for the ryotenkai project, a comprehe | — |
-| `docker` | The docker module serves as a containerization and infrastructure support layer  | — |
-| `scripts` | The scripts module serves as a centralized repository for utility scripts and au | — |
-| `web` | The web module serves as the frontend foundation for the application, providing  | — |
-| `community` | The community module serves as an extensible repository for third-party evaluati | — |
+| `src` | The src module serves as the core engine for the RyotenkAI training pipeline | — |
+| `docker` | The docker module serves as a specialized utility package focused on environment | — |
+| `scripts` | The scripts module serves as a centralized repository for automation and quality | — |
+| `web` | The web module serves as the frontend configuration and tooling root for the pro | — |
+| `community` | The community module serves as an extensible integration layer for third-party e | — |
+| `packages` | The packages module acts as the foundational infrastructure layer for the Ryoten | — |
+| `tests` | The tests module serves as the central verification suite for the ryotenkai ecos | — |
 ### Entry Points
 - `web/src/App.tsx`
+- `src/cli/app.py`
 - `src/api/main.py`
+- `community/evaluation/cerebras_judge/plugin/main.py`
+- `src/reports/__main__.py`
 - `src/api/schemas/run.py`
 - `src/main.py`
+- `src/cli/commands/run.py`
 - `docker/mlflow/start.sh`
-- `run.sh`
-- `web/scripts/start.sh`
-- `web/src/components/icons/index.tsx`
-- `web/src/main.tsx`
+- `src/cli/commands/server.py`
 ### Tech Stack
 **Languages:** Python
-**Frameworks:** FastAPI, PyTorch, Pydantic
+**Frameworks:** Pydantic
 
 ### Hotspots (High Churn)
 | File | Churn | 90d Commits | Owner |
 |------|-------|-------------|-------|
-| `src/pipeline/orchestrator.py` | 100.0th %ile | 39 | daniil |
+| `src/pipeline/orchestrator.py` | 100.0th %ile | 45 | daniil |
+| `src/pipeline/stages/training_monitor.py` | 100.0th %ile | 28 | daniil |
+| `src/tests/unit/pipeline/test_training_monitor_v2.py` | 99.9th %ile | 16 | daniil |
+| `web/src/api/openapi.json` | 99.9th %ile | 14 | daniil |
 | `src/pipeline/stages/managers/deployment_manager.py` | 99.9th %ile | 16 | daniil |
-| `web/src/components/ConfigBuilder/FieldRenderer.tsx` | 99.8th %ile | 19 | daniil |
-| `web/src/api/openapi.json` | 99.7th %ile | 12 | daniil |
-| `src/tests/unit/pipeline/stages/managers/test_deployment_manager.py` | 99.7th %ile | 12 | daniil |
 
 ### Repowise MCP Tools
 
