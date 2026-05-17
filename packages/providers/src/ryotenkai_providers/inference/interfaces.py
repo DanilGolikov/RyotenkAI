@@ -26,22 +26,6 @@ class PipelineReadinessMode(StrEnum):
     SKIP = "skip"
 
 
-@runtime_checkable
-class InferenceEventLogger(Protocol):
-    """
-    Minimal event logger interface used by inference providers.
-
-    Today this is backed by MLflowManager, but we keep it as a protocol to avoid
-    leaking MLflow-specific types into provider interfaces.
-    """
-
-    def log_event_start(self, message: str, *, category: str, source: str, **kwargs: Any) -> None: ...
-
-    def log_event_complete(self, message: str, *, category: str, source: str, **kwargs: Any) -> None: ...
-
-    def log_event_error(self, message: str, *, category: str, source: str, **kwargs: Any) -> None: ...
-
-
 @dataclass(frozen=True)
 class EndpointInfo:
     """Information about a deployed inference endpoint.
@@ -157,8 +141,6 @@ class IInferenceProvider(Protocol):
             ConfigInvalidError: invalid model_source / adapter ref.
         """
         ...
-
-    def set_event_logger(self, event_logger: InferenceEventLogger | None) -> None: ...
 
     def get_pipeline_readiness_mode(self) -> PipelineReadinessMode: ...
 

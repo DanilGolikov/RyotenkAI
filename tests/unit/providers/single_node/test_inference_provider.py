@@ -175,13 +175,16 @@ class TestProperties:
     def test_get_endpoint_info_initially_none(self, provider):
         assert provider.get_endpoint_info() is None
 
-    def test_set_event_logger(self, provider):
-        logger = Mock()
-        provider.set_event_logger(logger)
-        assert provider._mlflow_manager is logger
+    def test_set_event_logger_removed_in_phase_7(self, provider):
+        """Phase 7: ``set_event_logger`` was retired alongside
+        :class:`InferenceEventLogger` Protocol. The legacy plumbing is
+        gone; ``_mlflow_manager`` is wired through the constructor only
+        (see ``test_set_event_logger_attribute_default`` below).
+        """
+        assert not hasattr(provider, "set_event_logger")
 
-    def test_set_event_logger_none(self, provider):
-        provider.set_event_logger(None)
+    def test_mlflow_manager_attribute_default(self, provider):
+        # Default state: provider starts with no mlflow manager.
         assert provider._mlflow_manager is None
 
 

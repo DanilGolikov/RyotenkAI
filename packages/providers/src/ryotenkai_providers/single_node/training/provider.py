@@ -12,7 +12,6 @@ import time
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE, RUNTIME_PROVIDER_ENV_VAR
 from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
     GPUInfo,
@@ -22,12 +21,23 @@ from ryotenkai_providers.training.interfaces import (
     ProviderStatus,
     SSHConnectionInfo,
     TrainingScriptHooks,
-    VolumeKind,
 )
+from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE, RUNTIME_PROVIDER_ENV_VAR
 from ryotenkai_shared.errors import (
     ProviderUnavailableError,
     RyotenkAIError,
     SSHConnectionFailedError,
+)
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_gpu import (
+    GPUSSHProvisionedEvent,
+    GPUSSHProvisionedPayload,
+    GpuCleanupCompletedEvent,
+    GpuCleanupCompletedPayload,
+    GpuCleanupFailedEvent,
+    GpuCleanupFailedPayload,
+    GpuCleanupStartedEvent,
+    GpuCleanupStartedPayload,
 )
 from ryotenkai_shared.utils.pod_layout import PodLayout
 from ryotenkai_shared.utils.ssh_client import SSHClient
@@ -37,10 +47,15 @@ from .health_check import SingleNodeHealthCheck
 
 _SSH_PORT_DEFAULT = 22
 _CLEANUP_TIMEOUT = 1800
+# Source URI for envelopes the provider emits. Per the event taxonomy
+# convention (``ryotenkai.<area>.<domain>.<verb>``) the provider runs
+# inside the control plane / orchestrator process even though it
+# represents a remote resource — control owns the rsync / SSH lifecycle.
+_PROVIDER_EVENT_SOURCE = "control://orchestrator/single_node_provider"
 
 if TYPE_CHECKING:
+    from ryotenkai_shared.events import IEventEmitter
     from ryotenkai_shared.pipeline_context import RunContext
-    from ryotenkai_shared.config import Secrets
 
 logger = logging.getLogger("ryotenkai")
 
@@ -88,6 +103,16 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         self._run_dir: str | None = None
         self._had_error: bool = False
 
+        # Phase 5 (event-system coverage gaps, 2026-05-16): typed
+        # ``ryotenkai.control.gpu.ssh_provisioned`` event emission.
+        # ``None`` is the legacy / test default — emit helpers no-op
+        # in that case and a single warning is logged the first time
+        # an emit would have fired. The control plane (gpu_deployer
+        # stage) calls :meth:`set_emitter` once the orchestrator's
+        # emitter is built (after canonical run-directory resolution).
+        self._emitter: IEventEmitter | None = None
+        self._emitter_missing_warned: bool = False
+
         if self._config.is_alias_mode:
             logger.info(f"[PROVIDER:INIT] SingleNodeProvider (alias: {self._config.ssh.alias})")
         else:
@@ -99,6 +124,59 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
     # provider_name / provider_type / provider_id default impls live on
     # ProviderBase — manifest-derived. See RunPodProvider for the same
     # pattern.
+
+    # ------------------------------------------------------------------
+    # Phase 5 emit wiring — optional, set lazily by the control plane.
+    # ------------------------------------------------------------------
+
+    def set_emitter(self, emitter: IEventEmitter | None) -> None:
+        """Wire (or replace) the typed event emitter."""
+        self._emitter = emitter
+
+    def _emit_ssh_provisioned(self, *, run_id: str) -> None:
+        """Emit ``ryotenkai.control.gpu.ssh_provisioned`` after a
+        successful SSH handshake.
+
+        ``key_fingerprint`` is left empty when the connection used an
+        SSH alias (the key is resolved by the user's ssh_config and we
+        don't have a stable handle to it). For explicit-key flows the
+        configured ``key_path`` is forwarded as the fingerprint —
+        callers comparing fingerprints across runs should not rely on
+        the value matching ``ssh-keygen -l`` output today; Phase 6
+        upgrades the fingerprint to a true SHA256 once the SSH client
+        surfaces it natively.
+        """
+        if self._emitter is None:
+            if not self._emitter_missing_warned:
+                logger.warning(
+                    "[PROVIDER:EVENTS] SingleNodeProvider has no emitter wired; "
+                    "skipping typed ssh_provisioned events. Wiring will land in "
+                    "Phase 6 full DI integration.",
+                )
+                self._emitter_missing_warned = True
+            return
+
+        host = self._config.get_ssh_host_for_client()
+        key_fingerprint = ""
+        if not self._config.is_alias_mode:
+            try:
+                key_fingerprint = str(
+                    self._config.resolve_ssh_key_path_for_client() or "",
+                )
+            except Exception:
+                key_fingerprint = ""
+
+        self._emitter.emit(
+            GPUSSHProvisionedEvent(
+                source=_PROVIDER_EVENT_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=GPUSSHProvisionedPayload(
+                    host=str(host or ""),
+                    key_fingerprint=key_fingerprint,
+                ),
+            ),
+        )
 
     def connect(self, *, run: RunContext) -> SSHConnectionInfo:
         """
@@ -208,6 +286,12 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
                     detail=f"SSH connection failed: {error}",
                     context={"legacy_code": "SINGLENODE_SSH_CONNECT_FAILED"},
                 )
+
+            # Phase 5: SSH handshake succeeded — emit the typed
+            # ssh_provisioned envelope. Fires once per ``connect``;
+            # downstream stages can correlate by stage_id (gpu_deployer
+            # opens the stage_scope) + run_id.
+            self._emit_ssh_provisioned(run_id=str(run.name))
 
             # Run health checks (docker-only)
             health_checker = SingleNodeHealthCheck(self._ssh_client)
@@ -329,11 +413,90 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         except Exception as e:
             logger.debug(f"[PROVIDER] Failed to inspect/stop inference container (best-effort): {e}")
 
+    # ------------------------------------------------------------------
+    # Cleanup event helpers (post-Phase-10 visibility gap close).
+    #
+    # ``reason`` is forwarded from the caller's stop-chain — orchestrator
+    # passes ``"cancelled"`` / ``"failed"`` / ``"forced"`` depending on the
+    # trigger. Default ``"natural"`` is used when the caller does not
+    # supply a reason (happy-path / explicit success).
+    # ------------------------------------------------------------------
+
+    def _emit_cleanup_started(self, *, reason: str, instance_id: str | None) -> None:
+        # ``getattr`` defence — older test fixtures construct via
+        # ``__new__`` and never call :meth:`__init__`, so the
+        # ``_emitter`` slot may be missing entirely. Treating that
+        # case identically to "no emitter wired" keeps the helpers
+        # safe to call from every code path.
+        if getattr(self, "_emitter", None) is None:
+            return
+        self._emitter.emit(
+            GpuCleanupStartedEvent(
+                source=_PROVIDER_EVENT_SOURCE,
+                run_id=instance_id or "unknown",
+                offset=UNKNOWN_OFFSET,
+                payload=GpuCleanupStartedPayload(
+                    provider="single_node",
+                    instance_id=instance_id,
+                    reason=reason,  # type: ignore[arg-type]
+                ),
+            ),
+        )
+
+    def _emit_cleanup_completed(
+        self,
+        *,
+        instance_id: str | None,
+        duration_s: float,
+        resources_freed: dict[str, int],
+    ) -> None:
+        if getattr(self, "_emitter", None) is None:
+            return
+        self._emitter.emit(
+            GpuCleanupCompletedEvent(
+                source=_PROVIDER_EVENT_SOURCE,
+                run_id=instance_id or "unknown",
+                offset=UNKNOWN_OFFSET,
+                payload=GpuCleanupCompletedPayload(
+                    provider="single_node",
+                    instance_id=instance_id,
+                    duration_s=duration_s,
+                    resources_freed=resources_freed,
+                ),
+            ),
+        )
+
+    def _emit_cleanup_failed(
+        self,
+        *,
+        instance_id: str | None,
+        error_type: str,
+        message: str,
+        partial_cleanup: bool,
+    ) -> None:
+        if getattr(self, "_emitter", None) is None:
+            return
+        self._emitter.emit(
+            GpuCleanupFailedEvent(
+                source=_PROVIDER_EVENT_SOURCE,
+                run_id=instance_id or "unknown",
+                offset=UNKNOWN_OFFSET,
+                payload=GpuCleanupFailedPayload(
+                    provider="single_node",
+                    instance_id=instance_id,
+                    error_type=error_type,
+                    message=message,
+                    partial_cleanup=partial_cleanup,
+                ),
+            ),
+        )
+
     def cleanup_after_run(
         self,
         container_name: str,
         *,
         ssh_command_timeout: int = 10,
+        reason: str = "natural",
     ) -> None:
         """Phase 9.B — terminate the training docker container, fail-soft.
 
@@ -367,6 +530,19 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
                 round-trip. 10s covers normal docker daemon
                 interaction on a healthy host with margin; tunable
                 for slower networks if it ever surfaces as a flake.
+            reason: Upstream trigger forwarded into the
+                ``GpuCleanupStartedEvent`` payload. Defaults to
+                ``"natural"`` for happy-path / explicit success
+                callers; orchestrator stop-chain passes
+                ``"cancelled"`` / ``"failed"`` / ``"forced"``.
+
+        Emits:
+            * ``GpuCleanupStartedEvent`` before the docker rm.
+            * ``GpuCleanupCompletedEvent`` on success.
+            * ``GpuCleanupFailedEvent`` on any error path, with
+              ``partial_cleanup`` set to ``True`` when forward
+              progress was made (e.g. rm succeeded but verify
+              reported the container is still listed).
 
         Raises:
             ProviderUnavailableError: SSH client missing, command
@@ -379,9 +555,28 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
                 ``SINGLENODE_CLEANUP_DOCKER_RM_FAILED`` /
                 ``SINGLENODE_CLEANUP_VERIFY_FAILED``.
         """
+        cleanup_started_at = time.monotonic()
+        # ``instance_id`` for the envelope is the docker container name —
+        # for single_node hosts there's no cloud-side resource id, so the
+        # container name is the most actionable handle for operators
+        # debugging a leak / orphan from the timeline.
+        instance_id = container_name or None
+
+        # Emit started BEFORE the precondition checks below so a malformed
+        # caller still surfaces as "cleanup attempt happened, failed
+        # immediately" in the timeline rather than being invisible.
+        self._emit_cleanup_started(reason=reason, instance_id=instance_id)
+
         if self._ssh_client is None:
+            msg = "cleanup_after_run called before connect — no SSH client to drive docker rm"
+            self._emit_cleanup_failed(
+                instance_id=instance_id,
+                error_type="ProviderUnavailableError",
+                message=msg,
+                partial_cleanup=False,
+            )
             raise ProviderUnavailableError(
-                detail="cleanup_after_run called before connect — no SSH client to drive docker rm",
+                detail=msg,
                 context={"legacy_code": "SINGLENODE_CLEANUP_NO_SSH"},
             )
 
@@ -392,11 +587,18 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         # handles quoting — but explicit narrow allowlist is
         # cleaner and surfaces typos early.
         if not container_name or any(ch in container_name for ch in (" ", ";", "&", "|", "$", "`", "\n")):
+            msg = (
+                f"cleanup_after_run: invalid container_name "
+                f"{container_name!r} — must be a single shell token"
+            )
+            self._emit_cleanup_failed(
+                instance_id=instance_id,
+                error_type="ProviderUnavailableError",
+                message=msg,
+                partial_cleanup=False,
+            )
             raise ProviderUnavailableError(
-                detail=(
-                    f"cleanup_after_run: invalid container_name "
-                    f"{container_name!r} — must be a single shell token"
-                ),
+                detail=msg,
                 context={"legacy_code": "SINGLENODE_CLEANUP_INVALID_NAME"},
             )
 
@@ -411,6 +613,12 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
                 silent=False,
             )
         except Exception as exc:
+            self._emit_cleanup_failed(
+                instance_id=instance_id,
+                error_type=type(exc).__name__,
+                message=f"cleanup_after_run: SSH transport failed: {exc}",
+                partial_cleanup=False,
+            )
             raise ProviderUnavailableError(
                 detail=f"cleanup_after_run: SSH transport failed: {exc}",
                 context={"legacy_code": "SINGLENODE_CLEANUP_SSH_TRANSPORT"},
@@ -418,8 +626,15 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
             ) from exc
 
         if not ok:
+            msg = f"docker rm -f {container_name} failed: {(stderr or '')[:200]}"
+            self._emit_cleanup_failed(
+                instance_id=instance_id,
+                error_type="ProviderUnavailableError",
+                message=msg,
+                partial_cleanup=False,
+            )
             raise ProviderUnavailableError(
-                detail=f"docker rm -f {container_name} failed: {(stderr or '')[:200]}",
+                detail=msg,
                 context={"legacy_code": "SINGLENODE_CLEANUP_DOCKER_RM_FAILED"},
             )
 
@@ -434,26 +649,47 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
             )
         except Exception as exc:
             # Verification failed but rm succeeded — log and treat as
-            # success; the rm output is the source of truth.
+            # success; the rm output is the source of truth. We still
+            # emit ``completed`` so the timeline closes the cleanup span.
             logger.debug(
                 "[PROVIDER:CLEANUP] verify step failed for %s: %s — " "treating as removed since docker rm succeeded",
                 container_name,
                 exc,
             )
+            self._emit_cleanup_completed(
+                instance_id=instance_id,
+                duration_s=time.monotonic() - cleanup_started_at,
+                resources_freed={"containers": 1},
+            )
             return
 
         if ok_v and stdout_v.strip():
+            # rm succeeded (exit 0 from the shell) but the container
+            # is still listed — partial cleanup: we *did* invoke rm,
+            # we just can't confirm the side-effect.
+            msg = (
+                f"docker rm reported success but container "
+                f"{container_name!r} still listed by docker ps"
+            )
+            self._emit_cleanup_failed(
+                instance_id=instance_id,
+                error_type="ProviderUnavailableError",
+                message=msg,
+                partial_cleanup=True,
+            )
             raise ProviderUnavailableError(
-                detail=(
-                    f"docker rm reported success but container "
-                    f"{container_name!r} still listed by docker ps"
-                ),
+                detail=msg,
                 context={"legacy_code": "SINGLENODE_CLEANUP_VERIFY_FAILED"},
             )
 
         logger.info(
             "[PROVIDER:CLEANUP] training container %s removed",
             container_name,
+        )
+        self._emit_cleanup_completed(
+            instance_id=instance_id,
+            duration_s=time.monotonic() - cleanup_started_at,
+            resources_freed={"containers": 1},
         )
 
     def disconnect(self) -> None:

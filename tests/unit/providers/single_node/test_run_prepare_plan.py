@@ -501,41 +501,44 @@ class TestInvariants:
 
 
 class TestLogicSpecific:
-    def test_emits_mlflow_events_per_step(self, provider, fake_docker) -> None:
-        """Operators filter on ``Prepare started``, ``Prepare step started``,
-        ``Prepare step completed``, ``Prepare completed``."""
+    def test_no_mlflow_log_event_calls_in_phase_7(self, provider, fake_docker) -> None:
+        """Phase 7: per-step ``log_event_*`` calls were retired. The
+        provider no longer touches the (removed) MLflow event-log API;
+        prepare lifecycle is observable via the typed event journal in
+        future iterations. Here we assert the calls are absent.
+        """
         mlflow = MagicMock()
+        # No log_event_* methods exist on the post-Phase-7 manager — make
+        # the mock raise if they're accessed, to catch regressions.
+        for name in (
+            "log_event",
+            "log_event_start",
+            "log_event_complete",
+            "log_event_error",
+            "log_event_warning",
+            "log_event_info",
+            "log_event_checkpoint",
+        ):
+            setattr(
+                type(mlflow),
+                name,
+                property(lambda _self, _n=name: (_ for _ in ()).throw(
+                    AttributeError(f"Phase 7: {_n!r} removed"),
+                )),
+            )
         provider._mlflow_manager = mlflow
         plan = _plan(_step(success_artifact=None))
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
         _seed_prepare_step(fake_docker)
         with patch.object(provider, "_ensure_docker_image", return_value=None):
+            # Should not raise — adapter must not call log_event_* anymore.
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
                 run_id="r1",
                 workspace_host_path="/host/ws/inference",
             )
-
-        # log_event_start called twice (plan-start, step-start); log_event_complete twice.
-        assert mlflow.log_event_start.call_count == 2
-        assert mlflow.log_event_complete.call_count == 2
-
-        # Event messages renamed Merge* → Prepare* (constraint AD-A13).
-        all_msgs = [
-            str(c.args[0]) if c.args else ""
-            for c in (
-                mlflow.log_event_start.call_args_list
-                + mlflow.log_event_complete.call_args_list
-            )
-        ]
-        assert any("Prepare started" in m for m in all_msgs)
-        assert any("Prepare step started" in m for m in all_msgs)
-        assert any("Prepare step completed" in m for m in all_msgs)
-        assert any("Prepare completed" in m for m in all_msgs)
-        # Old strings absent.
-        assert not any("Merge" in m for m in all_msgs)
 
     def test_container_name_uses_run_id_and_step_name(
         self, provider, fake_docker,

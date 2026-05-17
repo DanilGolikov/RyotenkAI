@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from ryotenkai_shared.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_SINGLE_NODE, VLLM_INFERENCE_CONTAINER_NAME
+
+
 def _resolve_engine_image(engine_kind: str) -> str:
     """Resolve container image for ``engine_kind`` via the engine registry.
 
@@ -30,7 +32,6 @@ def _resolve_engine_image(engine_kind: str) -> str:
     from ryotenkai_engines import get_registry
 
     return get_registry().get_image(engine_kind)
-from ryotenkai_providers.constants import CATEGORY_INFERENCE as _KEY_INFERENCE
 from ryotenkai_providers.constants import ENCODING_UTF8 as _ENCODING_UTF8
 from ryotenkai_providers.constants import SHA12_LEN
 from ryotenkai_providers.inference.interfaces import (
@@ -39,7 +40,6 @@ from ryotenkai_providers.inference.interfaces import (
     InferenceArtifacts,
     InferenceArtifactsContext,
     InferenceCapabilities,
-    InferenceEventLogger,
     PipelineReadinessMode,
 )
 from ryotenkai_providers.single_node.training.health_check import SingleNodeHealthCheck
@@ -62,7 +62,7 @@ from .artifacts import render_readme as _render_readme
 if TYPE_CHECKING:
     from ryotenkai_engines.interfaces import PreparePlan
     from ryotenkai_engines.vllm.config import VLLMEngineConfig
-    from ryotenkai_shared.config import PipelineConfig, Secrets
+
 
 PULL_TIMEOUT = 1200
 SOURCE_SINGLE_NODE_INFERENCE = "SingleNodeInferenceProvider"
@@ -104,7 +104,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
 
     def __init__(
         self,
-        ctx: "ProviderContext",
+        ctx: ProviderContext,
         *,
         docker: IDockerClient | None = None,
     ) -> None:
@@ -413,10 +413,6 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
 
         logger.info(f"✅ Inference deployed (single_node/vLLM): {endpoint_url} (use SSH tunnel)")
         return self._endpoint_info
-
-    def set_event_logger(self, event_logger: InferenceEventLogger | None) -> None:
-        # Backward-compatible internal name (used across provider internals)
-        self._mlflow_manager = event_logger  # type: ignore[assignment]
 
     def get_pipeline_readiness_mode(self) -> PipelineReadinessMode:
         return PipelineReadinessMode.WAIT_FOR_HEALTHY
@@ -765,7 +761,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         self,
         *,
         ssh: SSHClient,
-        plan: "PreparePlan",
+        plan: PreparePlan,
         run_id: str,
         workspace_host_path: str,
     ) -> None:
@@ -791,6 +787,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         ``duration_seconds``) — operator dashboards filter on these.
         """
         from ryotenkai_engines.interfaces import PrepareStep
+
         from ryotenkai_providers.inference.launch import format_prepare_step
 
         if not plan.steps:
@@ -819,44 +816,26 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         prepare_log_path = log_dir / "inference" / "prepare.log"
         prepare_log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        plan_started_at = time.time()
-        if self._mlflow_manager:
-            self._mlflow_manager.log_event_start(
-                f"Prepare started: {len(plan.steps)} step(s)",
-                category=_KEY_INFERENCE,
-                source=SOURCE_SINGLE_NODE_INFERENCE,
-                step_count=len(plan.steps),
-            )
+        # Phase 7: legacy MLflow ``log_event_*`` removed; lifecycle is
+        # captured via typed events on the journal. ``plan_started_at``
+        # is no longer recorded as a separate timestamp.
 
         step: PrepareStep
-        for index, step in enumerate(plan.steps):
+        for _index, step in enumerate(plan.steps):
             step_started_at = time.time()
             container_name = f"helix-prepare-{run_id}-{step.name}"
             image = step.image if step.image else engine_serve_image
 
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_start(
-                    f"Prepare step started: {step.name}",
-                    category=_KEY_INFERENCE,
-                    source=SOURCE_SINGLE_NODE_INFERENCE,
-                    step_name=step.name,
-                    step_index=index,
-                    step_count=len(plan.steps),
-                )
+            # Phase 7: legacy MLflow ``log_event_*`` removed; lifecycle is
+            # captured via typed events on the journal.
 
             # 1. Pull image (idempotent — docker layer cache makes this cheap).
             try:
                 self._ensure_docker_image(ssh=ssh, image=image)
             except RyotenkAIError as exc:
                 err_msg = exc.detail or str(exc)
-                if self._mlflow_manager:
-                    self._mlflow_manager.log_event_error(
-                        f"Prepare step failed (image pull): {step.name}",
-                        category=_KEY_INFERENCE,
-                        source=SOURCE_SINGLE_NODE_INFERENCE,
-                        step_name=step.name,
-                        step_index=index,
-                    )
+                # Phase 7: legacy MLflow ``log_event_*`` removed; lifecycle is
+                # captured via typed events on the journal.
                 raise InferenceUnavailableError(
                     detail=f"Prepare step {step.name!r} image not available: {err_msg}",
                     context={"reason": "SINGLENODE_PREPARE_IMAGE_PULL_FAILED"},
@@ -885,14 +864,8 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             ok, _stdout, stderr = ssh.exec_command(cmd, timeout=_QUICK_CMD_TIMEOUT_S, silent=False)
             if not ok:
                 logger.error(f"Failed to start prepare container: {stderr[:LOG_OUTPUT_LONG_CHARS]}")
-                if self._mlflow_manager:
-                    self._mlflow_manager.log_event_error(
-                        f"Prepare step failed to start: {step.name}",
-                        category=_KEY_INFERENCE,
-                        source=SOURCE_SINGLE_NODE_INFERENCE,
-                        step_name=step.name,
-                        step_index=index,
-                    )
+                # Phase 7: legacy MLflow ``log_event_*`` removed; lifecycle is
+                # captured via typed events on the journal.
                 raise InferenceUnavailableError(
                     detail=f"Prepare container start failed for {step.name!r}: {stderr[:LOG_OUTPUT_LONG_CHARS]}",
                     context={"reason": "SINGLENODE_PREPARE_CONTAINER_START_FAILED"},
@@ -911,15 +884,8 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                         )
                     except (ProviderUnavailableError, ConfigInvalidError) as exc:
                         logger.debug(f"Timeout-path cleanup rm_force failed: {exc}")
-                    if self._mlflow_manager:
-                        self._mlflow_manager.log_event_error(
-                            f"Prepare step timed out: {step.name}",
-                            category=_KEY_INFERENCE,
-                            source=SOURCE_SINGLE_NODE_INFERENCE,
-                            step_name=step.name,
-                            step_index=index,
-                            timeout_seconds=step.timeout_seconds,
-                        )
+                    # Phase 7: legacy MLflow ``log_event_*`` removed; lifecycle is
+                    # captured via typed events on the journal.
                     raise InferenceUnavailableError(
                         detail=f"Prepare step {step.name!r} timed out after {step.timeout_seconds}s",
                         context={"reason": "SINGLENODE_PREPARE_TIMEOUT"},
@@ -968,16 +934,8 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
 
             # 6. Validate exit code.
             if exit_code != 0:
-                if self._mlflow_manager:
-                    self._mlflow_manager.log_event_error(
-                        f"Prepare step failed: {step.name} (exit code {exit_code})",
-                        category=_KEY_INFERENCE,
-                        source=SOURCE_SINGLE_NODE_INFERENCE,
-                        step_name=step.name,
-                        step_index=index,
-                        duration_seconds=step_duration,
-                        exit_code=exit_code,
-                    )
+                # Phase 7: legacy MLflow ``log_event_*`` removed; lifecycle is
+                # captured via typed events on the journal.
                 raise InferenceUnavailableError(
                     detail=(
                         f"Prepare step {step.name!r} failed with exit code "
@@ -988,15 +946,8 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
 
             # 7. Validate success marker (when declared).
             if not marker_seen:
-                if self._mlflow_manager:
-                    self._mlflow_manager.log_event_error(
-                        f"Prepare step missing success marker: {step.name}",
-                        category=_KEY_INFERENCE,
-                        source=SOURCE_SINGLE_NODE_INFERENCE,
-                        step_name=step.name,
-                        step_index=index,
-                        duration_seconds=step_duration,
-                    )
+                # Phase 7: legacy MLflow ``log_event_*`` removed; lifecycle is
+                # captured via typed events on the journal.
                 raise InferenceUnavailableError(
                     detail=(
                         f"Prepare step {step.name!r} did not emit success "
@@ -1019,15 +970,8 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                     _ok_ls, ls_stdout, _ls_stderr = ssh.exec_command(
                         f"ls -lah {host_dir} || true", timeout=10, silent=True
                     )
-                    if self._mlflow_manager:
-                        self._mlflow_manager.log_event_error(
-                            f"Prepare step artifact missing: {step.name}",
-                            category=_KEY_INFERENCE,
-                            source=SOURCE_SINGLE_NODE_INFERENCE,
-                            step_name=step.name,
-                            step_index=index,
-                            duration_seconds=step_duration,
-                        )
+                    # Phase 7: legacy MLflow ``log_event_*`` removed; lifecycle is
+                    # captured via typed events on the journal.
                     raise InferenceUnavailableError(
                         detail=(
                             f"Prepare step {step.name!r} reported success but artifact "
@@ -1037,26 +981,12 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                         context={"reason": "SINGLENODE_PREPARE_ARTIFACTS_NOT_FOUND"},
                     )
 
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_complete(
-                    f"Prepare step completed: {step.name} ({step_duration:.1f}s)",
-                    category=_KEY_INFERENCE,
-                    source=SOURCE_SINGLE_NODE_INFERENCE,
-                    step_name=step.name,
-                    step_index=index,
-                    duration_seconds=step_duration,
-                )
+            # Phase 7: legacy MLflow ``log_event_*`` removed; lifecycle is
+            # captured via typed events on the journal.
             logger.info(f"✅ Prepare step '{step.name}' completed in {step_duration:.1f}s")
 
-        plan_duration = time.time() - plan_started_at
-        if self._mlflow_manager:
-            self._mlflow_manager.log_event_complete(
-                f"Prepare completed ({plan_duration:.1f}s)",
-                category=_KEY_INFERENCE,
-                source=SOURCE_SINGLE_NODE_INFERENCE,
-                duration_seconds=plan_duration,
-                step_count=len(plan.steps),
-            )
+        # Phase 7: legacy MLflow ``log_event_*`` (plan completed) removed;
+        # the typed event journal is the SSOT for prepare-plan lifecycle.
 
     @staticmethod
     def _container_to_host(

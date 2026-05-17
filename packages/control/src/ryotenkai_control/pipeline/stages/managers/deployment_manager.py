@@ -36,11 +36,25 @@ from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer 
 from ryotenkai_control.pipeline.stages.managers.deployment.file_uploader import FileUploader
 from ryotenkai_control.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
 from ryotenkai_shared.errors import PipelineStageFailedError, RyotenkAIError
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_gpu import (
+    GPUCodeSyncedEvent,
+    GPUCodeSyncedPayload,
+)
 from ryotenkai_shared.utils.logger import logger
+
+# Source URI for envelopes the deployment manager emits. The manager is
+# logically part of the gpu_deployer stage, so envelopes correlate
+# under the same ``stage_id`` (set by the gpu_deployer's
+# ``stage_scope``). Keeping a distinct ``source`` here lets reports
+# attribute the rsync event to the deployment-manager component while
+# still grouping under the stage.
+_DEPLOYMENT_MANAGER_SOURCE = "control://orchestrator/deployment_manager"
 
 if TYPE_CHECKING:
     from ryotenkai_providers.training.interfaces import IGPUProvider
     from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.events import IEventEmitter
     from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
@@ -62,10 +76,28 @@ class TrainingDeploymentManager:
 
     DEFAULT_WORKSPACE = "/workspace"
 
-    def __init__(self, config: PipelineConfig, secrets: Secrets):
+    def __init__(
+        self,
+        config: PipelineConfig,
+        secrets: Secrets,
+        *,
+        emitter: IEventEmitter | None = None,
+    ):
         self.config = config
         self.secrets = secrets
         self._workspace = self.DEFAULT_WORKSPACE
+        # Phase 5 (event-system coverage gaps, 2026-05-16): the manager
+        # emits ``ryotenkai.control.gpu.code_synced`` after a successful
+        # ``deploy_code`` so reports / live dashboards have a typed
+        # signal for the rsync phase that previously surfaced only as
+        # ``logger.info`` lines. ``None`` is accepted for legacy /
+        # test wiring; emit helpers are no-ops in that case.
+        self._emitter: IEventEmitter | None = emitter
+        # Cached run-id so per-method emit helpers don't need it
+        # threaded through every call. ``set_run_id`` is the one-shot
+        # mutator the caller (gpu_deployer) invokes after the
+        # PipelineContext is resolved.
+        self._cached_run_id: str = "unknown"
         self._code_syncer = CodeSyncer(config=config, secrets=secrets)
         self._file_uploader = FileUploader(config=config, secrets=secrets)
         self._deps_installer = DependencyInstaller(config=config, secrets=secrets)
@@ -80,6 +112,72 @@ class TrainingDeploymentManager:
         for component in (self._code_syncer, self._file_uploader, self._deps_installer, self._launcher):
             component.set_workspace(self._workspace)
         logger.debug("🚀 TrainingDeploymentManager initialized")
+
+    def set_emitter(self, emitter: IEventEmitter) -> None:
+        """Wire (or replace) the typed event emitter.
+
+        Mirrors :meth:`PipelineStage.set_emitter` — the orchestrator
+        constructs stages eagerly but the emitter is only ready once
+        the canonical run directory is resolved.
+        """
+        self._emitter = emitter
+
+    def set_run_id(self, run_id: str) -> None:
+        """Pre-populate the run-id used in emitted envelopes.
+
+        ``gpu_deployer.execute`` resolves the canonical run id from
+        the :class:`PipelineContext` and calls this once before
+        ``deploy_code`` / ``start_training`` so emit helpers don't
+        have to re-resolve it from each call site.
+        """
+        if isinstance(run_id, str) and run_id:
+            self._cached_run_id = run_id
+
+    def _emit_code_synced(
+        self,
+        *,
+        run_id: str,
+        local_sha: str,
+        remote_sha: str,
+        bytes_transferred: int,
+    ) -> None:
+        if self._emitter is None:
+            return
+        # ``stage_scope`` is opened by the gpu_deployer stage above us;
+        # we don't need to re-enter it. The emitter fills ``stage_id``
+        # from the ContextVar.
+        self._emitter.emit(
+            GPUCodeSyncedEvent(
+                source=_DEPLOYMENT_MANAGER_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=GPUCodeSyncedPayload(
+                    local_sha=local_sha,
+                    remote_sha=remote_sha,
+                    bytes_transferred=bytes_transferred,
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _resolve_run_id_from_context(context: dict[str, Any] | None) -> str:
+        """Best-effort run-id extraction.
+
+        The deployment manager doesn't always have a context argument
+        in scope (deploy_code is called without one). For deploy_code
+        we pin to ``"unknown"`` because the rsync event correlates by
+        ``stage_id`` set by the parent gpu_deployer. start_training
+        receives a context dict where the run name lives under
+        ``PipelineContextKeys.RUN``; passing it through avoids a
+        cross-package import here.
+        """
+        if not context:
+            return "unknown"
+        run_obj = context.get("run")
+        run_name = getattr(run_obj, "name", None)
+        if isinstance(run_name, str) and run_name:
+            return run_name
+        return "unknown"
 
     @property
     def workspace(self) -> str:
@@ -103,6 +201,14 @@ class TrainingDeploymentManager:
         success; propagates :class:`SSHTransferFailedError` (or
         :class:`PipelineStageFailedError` for unexpected failures)
         from :meth:`CodeSyncer.sync`.
+
+        Phase 5 (event-system coverage gaps, 2026-05-16): emits
+        :class:`GPUCodeSyncedEvent` on success so reports surface the
+        rsync as a typed envelope rather than a log line. ``local_sha``
+        and ``remote_sha`` are emitted empty for now — the CodeSyncer
+        does not compute a content hash today; Phase 6 can fold a
+        manifest-derived sha in. ``bytes_transferred`` defaults to ``0``
+        for the same reason; the rsync output is not parsed.
         """
         try:
             self._code_syncer.sync(ssh_client)
@@ -114,6 +220,17 @@ class TrainingDeploymentManager:
                 context={"reason": "CODE_SYNC_FAILED"},
                 cause=exc,
             ) from exc
+
+        # Successful path — emit the typed envelope. ``run_id`` is
+        # filled at emit-time below; the parent ``gpu_deployer`` stage
+        # already opened a ``stage_scope`` so ``stage_id`` is auto-
+        # filled by the emitter.
+        self._emit_code_synced(
+            run_id=self._cached_run_id,
+            local_sha="",
+            remote_sha="",
+            bytes_transferred=0,
+        )
 
     def install_dependencies(self, ssh_client: SSHClient) -> None:
         """Verify training-runtime dependencies on the remote target.

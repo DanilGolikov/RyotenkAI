@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from ryotenkai_shared.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_RUNPOD
+
+
 def _resolve_engine_image(engine_kind: str) -> str:
     """Resolve container image for ``engine_kind`` via the engine registry.
 
@@ -35,7 +37,6 @@ from ryotenkai_providers.inference.interfaces import (
     InferenceArtifacts,
     InferenceArtifactsContext,
     InferenceCapabilities,
-    InferenceEventLogger,
     PipelineReadinessMode,
 )
 from ryotenkai_shared.errors import (
@@ -69,7 +70,6 @@ _UNKNOWN_ERROR = "<unknown>"
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
-    from ryotenkai_shared.config import PipelineConfig, Secrets
 
 
 def _sha12(text: str) -> str:
@@ -95,7 +95,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
 
     SUPPORTED_ENGINES: ClassVar[frozenset[str]] = frozenset({"vllm"})
 
-    def __init__(self, ctx: "ProviderContext") -> None:
+    def __init__(self, ctx: ProviderContext) -> None:
         """Initialize from a :class:`ProviderContext`.
 
         ``ctx.pipeline_config`` provides the full PipelineConfig.
@@ -148,7 +148,6 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         self._network_volume_meta: dict[str, Any] | None = None
         self._pod_id: str | None = None
         self._pod_name: str | None = None
-        self._event_logger: InferenceEventLogger | None = None
 
         # Populated by activate_for_eval(); consumed by deactivate_after_eval()
         self._eval_session: Any | None = None
@@ -280,10 +279,6 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
             resource_id=pod_id,
         )
         return self._endpoint_info
-
-    def set_event_logger(self, event_logger: InferenceEventLogger | None) -> None:
-        # Currently unused for pods (kept for interface uniformity).
-        self._event_logger = event_logger
 
     def get_pipeline_readiness_mode(self) -> PipelineReadinessMode:
         # Pod is intentionally stopped after provisioning to avoid GPU billing.

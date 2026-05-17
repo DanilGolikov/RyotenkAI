@@ -11,36 +11,75 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
+from ryotenkai_providers.inference.interfaces import (
+    EndpointInfo,
+    InferenceArtifactsContext,
+    PipelineReadinessMode,
+)
 from ryotenkai_shared.constants import (
     INFERENCE_CHAT_SCRIPT_FILENAME,
     INFERENCE_DIRNAME,
     INFERENCE_MANIFEST_FILENAME,
     INFERENCE_README_FILENAME,
 )
-from ryotenkai_shared.utils.cancellation import sleep_cancellable
-from ryotenkai_control.pipeline.constants import MLFLOW_CATEGORY_INFERENCE
-from ryotenkai_control.pipeline.stages.base import PipelineStage
-from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_shared.errors import (
     InferenceUnavailableError,
     InternalError,
     ModelLoadFailedError,
     RyotenkAIError,
 )
-from ryotenkai_shared.pipeline_context import RunContext
-from ryotenkai_providers.inference.interfaces import (
-    EndpointInfo,
-    InferenceArtifactsContext,
-    InferenceEventLogger,
-    PipelineReadinessMode,
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_inference import (
+    InferenceDeactivatedEvent,
+    InferenceDeactivatedPayload,
+    InferenceDeployedEvent,
+    InferenceDeployedPayload,
+    InferenceDeploymentFailedEvent,
+    InferenceDeploymentFailedPayload,
+    InferenceDeploymentStartedEvent,
+    InferenceDeploymentStartedPayload,
+    InferenceHealthCheckCompletedEvent,
+    InferenceHealthCheckCompletedPayload,
+    InferenceHealthCheckStartedEvent,
+    InferenceHealthCheckStartedPayload,
+    InferenceTarget,
 )
+from ryotenkai_shared.pipeline_context import RunContext
+from ryotenkai_shared.utils.cancellation import sleep_cancellable
 from ryotenkai_shared.utils.logger import get_run_log_dir, logger
+
+# Source URI for envelopes emitted from this stage.
+_STAGE_SOURCE = "control://orchestrator/inference_deployer"
+
+# Valid InferenceTarget literal values; used to coerce free-form
+# ``cfg.inference.engine.kind`` strings into the closed Pydantic union.
+_VALID_INFERENCE_TARGETS: tuple[str, ...] = ("vllm", "sglang", "hf_endpoint")
+
+
+def _coerce_inference_target(value: object) -> InferenceTarget:
+    """Map free-form engine kind to the closed :class:`InferenceTarget` literal.
+
+    Unknown values fall back to ``"vllm"`` — the historical default the
+    inference stack ships with. Keeping the fallback silent is a
+    deliberate choice: the event taxonomy is a closed discriminated
+    union, so emitting ``ryotenkai.unknown`` for one drift would
+    silently truncate the rest of the deployment_started / deployed /
+    failed correlation. If the upstream config grows a new engine
+    kind we want a focused taxonomy update — not a flood of unknowns.
+    """
+    if isinstance(value, str) and value in _VALID_INFERENCE_TARGETS:
+        return value  # type: ignore[return-value]
+    return "vllm"
+
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from ryotenkai_providers.inference.interfaces import IInferenceProvider
     from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.events import IEventEmitter
 
 
 # Phrases RunPod REST API returns when there is no GPU capacity.
@@ -79,10 +118,170 @@ def _make_deferred_endpoint(
 class InferenceDeployer(PipelineStage):
     """Deploy inference endpoint after training and evaluation."""
 
-    def __init__(self, config: PipelineConfig, secrets: Secrets):
+    def __init__(
+        self,
+        config: PipelineConfig,
+        secrets: Secrets,
+        *,
+        emitter: IEventEmitter | None = None,
+    ):
         super().__init__(config, StageNames.INFERENCE_DEPLOYER)
         self.secrets = secrets
         self._provider: IInferenceProvider | None = None
+        # Phase 5: typed event emission runs in PARALLEL with the
+        # legacy ``InferenceEventLogger`` (MLflow string artifact)
+        # path. Phase 6 will delete the MLflow path once reports
+        # consume the typed envelope stream.
+        self._emitter: IEventEmitter | None = emitter
+
+    # ------------------------------------------------------------------
+    # Public mutator used by the orchestrator's lazy emitter wiring —
+    # stages are constructed before the canonical run directory is
+    # known.
+    # ------------------------------------------------------------------
+
+    def set_emitter(self, emitter: IEventEmitter) -> None:
+        self._emitter = emitter
+
+    # ------------------------------------------------------------------
+    # Emit helpers — never raise on emit failure (the emitter itself
+    # swallows internal failures; helpers keep call sites readable).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_run_id(context: dict[str, Any]) -> str:
+        run_obj = context.get(PipelineContextKeys.RUN)
+        run_name = getattr(run_obj, "name", None)
+        if isinstance(run_name, str) and run_name:
+            return run_name
+        return "unknown"
+
+    def _emit_deployment_started(
+        self,
+        run_id: str,
+        *,
+        target: InferenceTarget,
+        model_path: str,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            InferenceDeploymentStartedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=InferenceDeploymentStartedPayload(
+                    target=target, model_path=model_path,
+                ),
+            ),
+        )
+
+    def _emit_health_check_started(
+        self,
+        run_id: str,
+        *,
+        endpoint: str,
+        timeout_s: float,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            InferenceHealthCheckStartedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=InferenceHealthCheckStartedPayload(
+                    endpoint=endpoint, timeout_s=timeout_s,
+                ),
+            ),
+        )
+
+    def _emit_health_check_completed(
+        self,
+        run_id: str,
+        *,
+        endpoint: str,
+        latency_ms: float,
+        model_loaded: bool,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            InferenceHealthCheckCompletedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=InferenceHealthCheckCompletedPayload(
+                    endpoint=endpoint,
+                    latency_ms=latency_ms,
+                    model_loaded=model_loaded,
+                ),
+            ),
+        )
+
+    def _emit_deployed(
+        self,
+        run_id: str,
+        *,
+        endpoint: str,
+        api_key_ref: str | None,
+        model_id: str,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            InferenceDeployedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=InferenceDeployedPayload(
+                    endpoint=endpoint,
+                    api_key_ref=api_key_ref,
+                    model_id=model_id,
+                ),
+            ),
+        )
+
+    def _emit_deployment_failed(
+        self,
+        run_id: str,
+        *,
+        target: InferenceTarget,
+        reason: str,
+        error_type: str,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            InferenceDeploymentFailedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=InferenceDeploymentFailedPayload(
+                    target=target, reason=reason, error_type=error_type,
+                ),
+            ),
+        )
+
+    def _emit_deactivated(
+        self,
+        run_id: str,
+        *,
+        endpoint: str,
+        reason: str,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            InferenceDeactivatedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=InferenceDeactivatedPayload(
+                    endpoint=endpoint, reason=reason,
+                ),
+            ),
+        )
 
     def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         """Deploy an inference endpoint or signal skipped.
@@ -108,23 +307,115 @@ class InferenceDeployer(PipelineStage):
                 },
             )
 
-        # Optional event logger from context (if available)
-        mlflow_manager = context.get(PipelineContextKeys.MLFLOW_MANAGER)
-        event_logger = mlflow_manager if isinstance(mlflow_manager, InferenceEventLogger) else None
+        # Phase 5 / 6.b: open a typed-event stage scope around the
+        # entire deployment flow so envelopes auto-fill ``stage_id``.
+        # Phase 6.b retired the parallel legacy MLflow event_logger
+        # path — typed envelopes are now the SSOT.
+        run_id = self._resolve_run_id(context)
+        engine_kind = getattr(inf_cfg.engine, "kind", inf_cfg.engine)
+        target_literal = _coerce_inference_target(engine_kind)
 
+        if self._emitter is not None:
+            with self._emitter.stage_scope(StageNames.INFERENCE_DEPLOYER):
+                return self._execute_scoped(
+                    context=context,
+                    inf_cfg=inf_cfg,
+                    run_id=run_id,
+                    target_literal=target_literal,
+                )
+        return self._execute_scoped(
+            context=context,
+            inf_cfg=inf_cfg,
+            run_id=run_id,
+            target_literal=target_literal,
+        )
+
+    def _execute_scoped(
+        self,
+        *,
+        context: dict[str, Any],
+        inf_cfg: Any,
+        run_id: str,
+        target_literal: InferenceTarget,
+    ) -> dict[str, Any]:
+        """The pre-emitter execute body — wrapped so the outer ``execute``
+        opens the stage scope. Phase 6.b: the parallel MLflow
+        ``event_logger`` path has been retired; typed envelopes are
+        the SSOT.
+        """
         # Resolve model source from ModelRetriever context (raises on miss).
-        model_source = self._resolve_model_source(context)
+        try:
+            model_source = self._resolve_model_source(context)
+        except RyotenkAIError as exc:
+            self._emit_deployment_failed(
+                run_id,
+                target=target_literal,
+                reason=exc.detail or str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise
 
         run = context.get(PipelineContextKeys.RUN)
         if not isinstance(run, RunContext):
+            self._emit_deployment_failed(
+                run_id,
+                target=target_literal,
+                reason="missing run context",
+                error_type="InternalError",
+            )
             raise InternalError(
                 detail="Missing run context: context['run'] must be RunContext (initialized by PipelineOrchestrator)",
                 context={"legacy_code": "MISSING_RUN_CONTEXT"},
             )
 
+        # Emit deployment_started AFTER model_source is resolved so the
+        # envelope carries the actual ``model_path`` rather than a
+        # placeholder. Started fires once per stage entry.
+        self._emit_deployment_started(
+            run_id,
+            target=target_literal,
+            model_path=model_source,
+        )
+
         run_name = run.name
         base_model_id = self.config.model.name
 
+        try:
+            return self._execute_deploy_flow(
+                context=context,
+                inf_cfg=inf_cfg,
+                run_id=run_id,
+                run_name=run_name,
+                model_source=model_source,
+                base_model_id=base_model_id,
+            )
+        except RyotenkAIError as exc:
+            self._emit_deployment_failed(
+                run_id,
+                target=target_literal,
+                reason=exc.detail or str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise
+        except Exception as exc:
+            self._emit_deployment_failed(
+                run_id,
+                target=target_literal,
+                reason=str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise
+
+    def _execute_deploy_flow(
+        self,
+        *,
+        context: dict[str, Any],
+        inf_cfg: Any,
+        run_id: str,
+        run_name: str,
+        model_source: str,
+        base_model_id: str,
+    ) -> dict[str, Any]:
         # Manifest-driven registry replaces the legacy
         # ``InferenceProviderFactory.create(config, secrets)`` if/elif
         # chain. Batch 12: registry raises typed exceptions directly;
@@ -157,8 +448,8 @@ class InferenceDeployer(PipelineStage):
             ) from exc
         self._provider = provider
 
-        # Explicit interface: no provider-private attribute injection
-        provider.set_event_logger(event_logger)
+        # Phase 7: ``set_event_logger`` removed from IInferenceProvider —
+        # typed envelopes are emitted directly by control-side stages.
 
         logger.info(
             "🚀 Deploying inference: provider=%s engine=%s",
@@ -218,7 +509,11 @@ class InferenceDeployer(PipelineStage):
             readiness = provider.get_pipeline_readiness_mode()
             if readiness == PipelineReadinessMode.WAIT_FOR_HEALTHY:
                 try:
-                    self._wait_for_healthy(provider, event_logger=event_logger)
+                    self._wait_for_healthy(
+                        provider,
+                        run_id=run_id,
+                        endpoint_url=endpoint.endpoint_url,
+                    )
                 except RyotenkAIError:
                     # Best-effort cleanup on error — swallow secondary errors
                     # so the original failure isn't masked.
@@ -297,6 +592,21 @@ class InferenceDeployer(PipelineStage):
             run_name=run_name,
         )
 
+        # Emit terminal ``deployed`` envelope. We emit even when the
+        # pod was deferred (no-capacity soft-fail path) because the
+        # manifest + chat script are still written and the user can
+        # invoke them later; reports surface the deferred status via
+        # the context dict's ``inference_pod_deferred`` field.
+        endpoint_url_for_event = (
+            eval_endpoint_url if eval_enabled and eval_endpoint_url else endpoint.endpoint_url
+        )
+        self._emit_deployed(
+            run_id,
+            endpoint=endpoint_url_for_event,
+            api_key_ref=None,
+            model_id=endpoint.model_id,
+        )
+
         return self.update_context(
             context,
             {
@@ -347,6 +657,25 @@ class InferenceDeployer(PipelineStage):
             logger.warning(f"[CLEANUP] deactivate_after_eval warning: {exc}")
         else:
             logger.info("[CLEANUP] Inference endpoint deactivated successfully")
+            # Phase 5: typed deactivation envelope. We don't have a
+            # run_id at cleanup time (cleanup is a no-arg method); the
+            # event uses ``"unknown"`` as a placeholder and the
+            # endpoint defaults to the empty string when the provider
+            # doesn't surface one. Reports can correlate by stage_id
+            # which the emitter fills from the ContextVar set in
+            # :meth:`execute`.
+            endpoint_for_event: str = ""
+            try:
+                endpoint_for_event = str(
+                    getattr(self._provider, "endpoint_url", "") or "",
+                )
+            except Exception:
+                endpoint_for_event = ""
+            self._emit_deactivated(
+                "unknown",
+                endpoint=endpoint_for_event,
+                reason="post_eval_cleanup",
+            )
 
     def _resolve_model_source(self, context: dict[str, Any]) -> str:
         """Resolve the model identifier the inference provider should serve.
@@ -380,7 +709,8 @@ class InferenceDeployer(PipelineStage):
         self,
         provider: IInferenceProvider,
         *,
-        event_logger: InferenceEventLogger | None,
+        run_id: str = "unknown",
+        endpoint_url: str = "",
     ) -> None:
         cfg = self.config.inference.common.health_check
         deadline = time.time() + cfg.timeout_seconds
@@ -393,15 +723,15 @@ class InferenceDeployer(PipelineStage):
 
         logger.info(f"📝 Collecting inference startup logs → {startup_log_path}")
 
-        # Track health check start for event logger (if available)
+        # Track health check start for typed envelope timing.
         health_check_start = time.time()
-        if event_logger:
-            event_logger.log_event_start(
-                "Health check started",
-                category=MLFLOW_CATEGORY_INFERENCE,
-                source=StageNames.INFERENCE_DEPLOYER,
-                timeout_seconds=cfg.timeout_seconds,
-            )
+        # Phase 6.b: typed envelope is the SSOT (legacy MLflow
+        # event_logger.log_event_start removed).
+        self._emit_health_check_started(
+            run_id,
+            endpoint=endpoint_url,
+            timeout_s=float(cfg.timeout_seconds),
+        )
 
         while time.time() < deadline:
             # Collect current logs
@@ -420,14 +750,18 @@ class InferenceDeployer(PipelineStage):
                     logger.info("✅ Inference endpoint is healthy")
                     logger.info(f"📥 Startup logs saved: {startup_log_path}")
 
-                    # Log successful health check
-                    if event_logger:
-                        event_logger.log_event_complete(
-                            f"Health check passed ({health_check_duration:.1f}s)",
-                            category=MLFLOW_CATEGORY_INFERENCE,
-                            source=StageNames.INFERENCE_DEPLOYER,
-                            duration_seconds=health_check_duration,
-                        )
+                    # Phase 6.b: typed completion envelope is the SSOT
+                    # (legacy MLflow event_logger.log_event_complete
+                    # removed). ``model_loaded=True`` is the invariant
+                    # of this branch (health_check OK ⇒ model server
+                    # reports ready); cold-start latency is the
+                    # wall-clock duration of the readiness loop.
+                    self._emit_health_check_completed(
+                        run_id,
+                        endpoint=endpoint_url,
+                        latency_ms=float(health_check_duration) * 1000.0,
+                        model_loaded=True,
+                    )
 
                     return None
                 last_state = "not_ready"
@@ -439,18 +773,11 @@ class InferenceDeployer(PipelineStage):
 
         # Final log collection on timeout (for diagnostics)
         provider.collect_startup_logs(local_path=startup_log_path)
-        health_check_duration = time.time() - health_check_start
         logger.error(f"❌ Inference health check timed out. Check logs: {startup_log_path}")
-
-        if event_logger:
-            event_logger.log_event_error(
-                f"Health check timed out after {cfg.timeout_seconds}s",
-                category=MLFLOW_CATEGORY_INFERENCE,
-                source=StageNames.INFERENCE_DEPLOYER,
-                duration_seconds=health_check_duration,
-                timeout_seconds=cfg.timeout_seconds,
-                last_state=last_state,
-            )
+        # Phase 6.b: typed envelope is the SSOT (legacy MLflow
+        # event_logger.log_event_error on health-check timeout
+        # removed). ``InferenceUnavailableError`` below is converted
+        # into ``InferenceDeploymentFailedEvent`` by the outer try.
 
         raise InferenceUnavailableError(
             detail=(

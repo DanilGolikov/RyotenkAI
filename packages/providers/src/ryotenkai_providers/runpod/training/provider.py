@@ -7,16 +7,10 @@ Implements IGPUProvider for RunPod cloud instances.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
-from ryotenkai_shared.errors import (
-    ProviderUnavailableError,
-    RyotenkAIError,
-    SSHConnectionFailedError,
-)
-from ryotenkai_shared.utils.cancellation import PipelineCancelled
 from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
     GPUInfo,
@@ -31,7 +25,24 @@ from ryotenkai_providers.training.interfaces import (
     TrainingScriptHooks,
     VolumeKind,
 )
-from ryotenkai_shared.constants import RUNTIME_IMAGE
+from ryotenkai_shared.constants import PROVIDER_RUNPOD, RUNTIME_IMAGE, RUNTIME_PROVIDER_ENV_VAR
+from ryotenkai_shared.errors import (
+    ProviderUnavailableError,
+    RyotenkAIError,
+    SSHConnectionFailedError,
+)
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_gpu import (
+    GPUSSHProvisionedEvent,
+    GPUSSHProvisionedPayload,
+    GpuCleanupCompletedEvent,
+    GpuCleanupCompletedPayload,
+    GpuCleanupFailedEvent,
+    GpuCleanupFailedPayload,
+    GpuCleanupStartedEvent,
+    GpuCleanupStartedPayload,
+)
+from ryotenkai_shared.utils.cancellation import PipelineCancelled
 from ryotenkai_shared.utils.pod_layout import PodLayout
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
@@ -77,9 +88,13 @@ _GONE_ERROR_MARKERS: tuple[str, ...] = (
 )
 
 if TYPE_CHECKING:
-    from ryotenkai_shared.pipeline_context import RunContext
     from ryotenkai_providers.runpod.models import PodSnapshot
-    from ryotenkai_shared.config import Secrets
+    from ryotenkai_shared.events import IEventEmitter
+    from ryotenkai_shared.pipeline_context import RunContext
+
+
+# Source URI for envelopes the provider emits (Phase 5 coverage gap).
+_RUNPOD_PROVIDER_EVENT_SOURCE = "control://orchestrator/runpod_provider"
 
 logger = logging.getLogger("ryotenkai")
 
@@ -156,6 +171,13 @@ class RunPodProvider(
         self._pod_info: PodResourceInfo | None = None
         self._had_error: bool = False
 
+        # Phase 5 (event-system coverage gaps, 2026-05-16): typed
+        # ``ryotenkai.control.gpu.ssh_provisioned`` envelope emission.
+        # ``None`` is the legacy / test default — emit helpers no-op
+        # in that case and a single warning is logged the first time.
+        self._emitter: IEventEmitter | None = None
+        self._emitter_missing_warned: bool = False
+
         api_key = secrets.runpod_api_key
         if not api_key:
             raise ValueError("secrets.runpod_api_key is required to use RunPodProvider")
@@ -174,6 +196,52 @@ class RunPodProvider(
         logger.info(
             f"[PROVIDER:INIT] RunPodProvider initialized: "
             f"GPU={self._config.training.gpu_type}, image={RUNTIME_IMAGE}"
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 5 emit wiring — optional, set lazily by the control plane.
+    # ------------------------------------------------------------------
+
+    def set_emitter(self, emitter: IEventEmitter | None) -> None:
+        """Wire (or replace) the typed event emitter."""
+        self._emitter = emitter
+
+    def _emit_ssh_provisioned(self, *, run_id: str, host: str) -> None:
+        """Emit ``ryotenkai.control.gpu.ssh_provisioned`` after the SSH
+        handshake on a freshly-provisioned pod.
+
+        ``key_fingerprint`` forwards the configured SSH key path. The
+        runpod provider does not surface a true ``ssh-keygen`` SHA256
+        today — see :class:`SingleNodeProvider._emit_ssh_provisioned`
+        for the same caveat.
+        """
+        if self._emitter is None:
+            if not self._emitter_missing_warned:
+                logger.warning(
+                    "[PROVIDER:EVENTS] RunPodProvider has no emitter wired; "
+                    "skipping typed ssh_provisioned events. Wiring will land "
+                    "in Phase 6 full DI integration.",
+                )
+                self._emitter_missing_warned = True
+            return
+
+        key_fingerprint = ""
+        try:
+            if getattr(self, "_config", None) is not None:
+                key_fingerprint = str(self._config.connect.ssh.key_path or "")
+        except Exception:
+            key_fingerprint = ""
+
+        self._emitter.emit(
+            GPUSSHProvisionedEvent(
+                source=_RUNPOD_PROVIDER_EVENT_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=GPUSSHProvisionedPayload(
+                    host=str(host or ""),
+                    key_fingerprint=key_fingerprint,
+                ),
+            ),
         )
 
     @classmethod
@@ -300,6 +368,11 @@ class RunPodProvider(
 
             logger.info("✅ SSH is ready!")
 
+            # Phase 5: SSH handshake on a freshly-provisioned pod is the
+            # canonical "ssh_provisioned" moment. Fires once per
+            # connect; correlates with the gpu_deployer's stage_scope.
+            self._emit_ssh_provisioned(run_id=str(run.name), host=str(ssh_ep.host))
+
             # Minimal training health check (fail-fast). Raises
             # ProviderUnavailableError on failure (Batch 12 migration).
             try:
@@ -358,7 +431,7 @@ class RunPodProvider(
             self._status = ProviderStatus.ERROR
             if self._pod_id:
                 logger.warning(f"[PROVIDER:CONNECT] cancelled during connect — terminating pod {self._pod_id}")
-                self._safe_cleanup_pod(self._pod_id)
+                self._safe_cleanup_pod(self._pod_id, reason="cancelled")
                 self._pod_id = None
             else:
                 logger.warning("[PROVIDER:CONNECT] cancelled during connect — no pod to clean up")
@@ -457,10 +530,140 @@ class RunPodProvider(
             context={"reason": "RUNPOD_POD_NOT_READY"},
         )
 
-    def _safe_cleanup_pod(self, pod_id: str) -> None:
-        """Terminate and unregister a pod, logging on failure instead of raising."""
+    # ------------------------------------------------------------------
+    # Cleanup event helpers (post-Phase-10 visibility gap close).
+    #
+    # ``reason`` is forwarded from the call-site stop-chain — connect()
+    # PipelineCancelled passes ``"cancelled"``, _create_and_wait_for_pod
+    # recreate paths pass ``"failed"``, disconnect() passes
+    # ``"natural"``. The default for legacy call-sites is ``"natural"``
+    # because emitting *some* envelope is strictly better than the
+    # pre-change zero-emission state.
+    # ------------------------------------------------------------------
+
+    def _emit_cleanup_started(self, *, reason: str, instance_id: str | None) -> None:
+        # ``getattr`` defence — fixtures constructed via ``__new__`` may
+        # not initialise the ``_emitter`` slot at all. Treat "missing"
+        # as "no emitter wired".
+        if getattr(self, "_emitter", None) is None:
+            return
+        self._emitter.emit(
+            GpuCleanupStartedEvent(
+                source=_RUNPOD_PROVIDER_EVENT_SOURCE,
+                run_id=instance_id or "unknown",
+                offset=UNKNOWN_OFFSET,
+                payload=GpuCleanupStartedPayload(
+                    provider="runpod",
+                    instance_id=instance_id,
+                    reason=reason,  # type: ignore[arg-type]
+                ),
+            ),
+        )
+
+    def _emit_cleanup_completed(
+        self,
+        *,
+        instance_id: str | None,
+        duration_s: float,
+        resources_freed: dict[str, int],
+    ) -> None:
+        if getattr(self, "_emitter", None) is None:
+            return
+        self._emitter.emit(
+            GpuCleanupCompletedEvent(
+                source=_RUNPOD_PROVIDER_EVENT_SOURCE,
+                run_id=instance_id or "unknown",
+                offset=UNKNOWN_OFFSET,
+                payload=GpuCleanupCompletedPayload(
+                    provider="runpod",
+                    instance_id=instance_id,
+                    duration_s=duration_s,
+                    resources_freed=resources_freed,
+                ),
+            ),
+        )
+
+    def _emit_cleanup_failed(
+        self,
+        *,
+        instance_id: str | None,
+        error_type: str,
+        message: str,
+        partial_cleanup: bool,
+    ) -> None:
+        if getattr(self, "_emitter", None) is None:
+            return
+        self._emitter.emit(
+            GpuCleanupFailedEvent(
+                source=_RUNPOD_PROVIDER_EVENT_SOURCE,
+                run_id=instance_id or "unknown",
+                offset=UNKNOWN_OFFSET,
+                payload=GpuCleanupFailedPayload(
+                    provider="runpod",
+                    instance_id=instance_id,
+                    error_type=error_type,
+                    message=message,
+                    partial_cleanup=partial_cleanup,
+                ),
+            ),
+        )
+
+    def _emitting_cleanup_pod(self, pod_id: str, *, reason: str) -> None:
+        """Run ``cleanup_manager.cleanup_pod`` with typed event emission.
+
+        Single funnel for all RunPod terminate calls so the timeline
+        always sees a ``cleanup_started`` -> ``cleanup_completed |
+        cleanup_failed`` pair. Raises on failure — callers that need
+        soft-fail semantics use :meth:`_safe_cleanup_pod` which wraps
+        this method.
+
+        For RunPod, ``partial_cleanup`` is always ``False``: the
+        cleanup-manager retry layer either gets a confirmed terminate
+        from the API (= success) or exhausts its retries (= total
+        failure). There is no intermediate "freed something" state to
+        report — the pod is one unit.
+        """
+        cleanup_started_at = time.monotonic()
+        self._emit_cleanup_started(reason=reason, instance_id=pod_id)
         try:
             self._cleanup_manager.cleanup_pod(pod_id)
+        except RyotenkAIError as exc:
+            self._emit_cleanup_failed(
+                instance_id=pod_id,
+                error_type=type(exc).__name__,
+                message=str(exc.detail or exc),
+                partial_cleanup=False,
+            )
+            raise
+        except Exception as exc:
+            # Defence-in-depth: cleanup_manager is contracted to raise
+            # only RyotenkAIError subclasses, but if a stray exception
+            # escapes we still emit failure to keep the timeline
+            # consistent before re-raising.
+            self._emit_cleanup_failed(
+                instance_id=pod_id,
+                error_type=type(exc).__name__,
+                message=str(exc),
+                partial_cleanup=False,
+            )
+            raise
+        self._emit_cleanup_completed(
+            instance_id=pod_id,
+            duration_s=time.monotonic() - cleanup_started_at,
+            resources_freed={"pods": 1},
+        )
+
+    def _safe_cleanup_pod(self, pod_id: str, *, reason: str = "failed") -> None:
+        """Terminate and unregister a pod, logging on failure instead of raising.
+
+        ``reason`` defaults to ``"failed"`` because every call-site here
+        is a recovery / abort path — connect() catch blocks,
+        _create_and_wait_for_pod retry loops. The disconnect happy path
+        does not use this method (it calls ``_emitting_cleanup_pod``
+        directly with ``reason="natural"``).
+        """
+        try:
+            self._emitting_cleanup_pod(pod_id, reason=reason)
         except RyotenkAIError as exc:
             logger.warning(f"[PROVIDER] Failed to cleanup pod {pod_id}: {exc}")
 
@@ -513,10 +716,18 @@ class RunPodProvider(
 
         if should_terminate:
             logger.info(f"[PROVIDER:DISCONNECT] Terminating pod {self._pod_id}...")
+            # Reason mapping: natural disconnect after success vs. after
+            # a failure. Both still attempt cleanup, but the timeline
+            # benefits from distinguishing the two — operators triaging
+            # leaks care which path got us here.
+            disconnect_reason = "failed" if was_error else "natural"
             try:
-                self._cleanup_manager.cleanup_pod(self._pod_id)
+                self._emitting_cleanup_pod(self._pod_id, reason=disconnect_reason)
                 logger.info("✅ Pod terminated")
             except RyotenkAIError as exc:
+                # ``_emitting_cleanup_pod`` already emitted
+                # ``GpuCleanupFailedEvent`` before raising; we only
+                # need the human-readable log here.
                 logger.warning(
                     f"[PROVIDER:DISCONNECT] Pod {self._pod_id} terminate call "
                     f"returned an error: {exc}. The pod "
