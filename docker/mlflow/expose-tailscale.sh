@@ -46,8 +46,31 @@ set +a
 
 MLFLOW_PORT="${MLFLOW_PORT:-5002}"
 TAILSCALE_FUNNEL_HTTPS_PORT="${TAILSCALE_FUNNEL_HTTPS_PORT:-443}"
+# Phase M6: MLFLOW_PORT (default 5002) is now the Caddy reverse proxy port,
+# not MLflow's own port. Caddy enforces basic-auth and forwards to
+# mlflow:5102 inside the docker network. Funnel target stays on MLFLOW_PORT
+# because Caddy is the only public entry point.
 LOCAL_TARGET="http://${LOCAL_HOST}:${MLFLOW_PORT}"
 PUBLIC_HEALTH_PATH="${PUBLIC_HEALTH_PATH:-/health}"
+
+# Public exposure is gated on basic-auth being configured. Without these
+# Caddy will refuse to start (compose `${...:?...}` interpolation fails)
+# and the whole stack will fail to come up — fail fast with a clearer
+# message here.
+require_caddy_basic_auth() {
+    local missing=()
+    [[ -z "${CADDY_BASIC_AUTH_USER:-}" ]] && missing+=("CADDY_BASIC_AUTH_USER")
+    [[ -z "${CADDY_BASIC_AUTH_HASH:-}" ]] && missing+=("CADDY_BASIC_AUTH_HASH")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "Error: missing required env in ${ENV_FILE}: ${missing[*]}"
+        echo "Generate a bcrypt hash with:"
+        echo "  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'YOUR_PASSWORD'"
+        echo "Then add it to ${ENV_FILE}:"
+        echo "  CADDY_BASIC_AUTH_USER=mlflow_user"
+        echo "  CADDY_BASIC_AUTH_HASH=<paste-hash-here>"
+        exit 1
+    fi
+}
 
 usage() {
     sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
@@ -406,6 +429,8 @@ print_success() {
 do_up() {
     require_command "docker" "https://docs.docker.com/get-started/get-docker/"
     require_command "tailscale" "https://tailscale.com/download"
+    # Phase M6: Caddy basic-auth is mandatory for public exposure.
+    require_caddy_basic_auth
     confirm_or_exit "This will start Tailscale, may rebuild the MLflow stack, and publish MLflow on the public internet. Continue?"
 
     select_tailscale_backend
@@ -542,6 +567,9 @@ do_down() {
         fi
     fi
 
+    # Caddy is part of the stack even for local-only mode; its env is still
+    # required for `docker compose up -d` to succeed.
+    require_caddy_basic_auth
     echo "Restarting MLflow without external host restrictions..."
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
     echo "Done. MLflow is available at ${LOCAL_TARGET} (local only)."

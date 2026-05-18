@@ -1,0 +1,33 @@
+# Caddy reverse proxy for MLflow.
+# TLS is handled upstream by Tailscale Funnel (HTTPS termination), so Caddy
+# itself listens plain HTTP on :5002 inside the container. The host port
+# (default 5002) is the ONLY public entry point to MLflow.
+{
+	auto_https off
+	admin off
+}
+
+:5002 {
+	# Health endpoint for the Tailscale Funnel probe — no auth required.
+	# Must come BEFORE basic_auth so the matcher wins.
+	handle /health {
+		respond "OK" 200
+	}
+
+	# Everything else requires HTTP Basic Auth. Credentials come from the
+	# environment at startup; the hash MUST be bcrypt (generate via
+	# `docker run --rm caddy:2-alpine caddy hash-password --plaintext ...`).
+	handle {
+		basic_auth {
+			{env.CADDY_BASIC_AUTH_USER} {env.CADDY_BASIC_AUTH_HASH}
+		}
+
+		reverse_proxy mlflow:5102 {
+			# Preserve the original Host so MLflow's --allowed-hosts check
+			# matches the public-facing hostname, not the internal service name.
+			# (Caddy already forwards X-Forwarded-* by default.)
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+}

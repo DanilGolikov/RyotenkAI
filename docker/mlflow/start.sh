@@ -39,11 +39,24 @@ case "$ACTION" in
         exit 0
         ;;
     up|start)
+        # Phase M6: Caddy basic-auth is mandatory for the stack to come up.
+        if [[ -z "${CADDY_BASIC_AUTH_USER:-}" ]] || [[ -z "${CADDY_BASIC_AUTH_HASH:-}" ]]; then
+            echo "Error: CADDY_BASIC_AUTH_USER and CADDY_BASIC_AUTH_HASH must be set in ${ENV_FILE}."
+            echo ""
+            echo "Generate a bcrypt hash for your password with:"
+            echo "  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'YOUR_PASSWORD'"
+            echo ""
+            echo "Then append to ${ENV_FILE}:"
+            echo "  CADDY_BASIC_AUTH_USER=mlflow_user"
+            echo "  CADDY_BASIC_AUTH_HASH=<paste-the-hash-output-above>"
+            exit 1
+        fi
+
         echo "Starting MLflow stack..."
         docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
         echo ""
         echo "Services:"
-        echo "  MLflow UI:      http://localhost:${MLFLOW_PORT:-5002}"
+        echo "  MLflow UI:      http://localhost:${MLFLOW_PORT:-5002}   (basic-auth via Caddy)"
         echo "  MinIO Console:  http://localhost:${MINIO_CONSOLE_PORT:-9001}"
         echo "  PostgreSQL:     localhost:${POSTGRES_PORT:-5432}"
         ;;

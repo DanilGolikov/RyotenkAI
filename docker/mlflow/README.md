@@ -1,27 +1,59 @@
 # MLflow Tracking Stack
 
-Local MLflow server for RyotenkAI with PostgreSQL (metadata) and MinIO (S3-compatible artifact storage).
+Local MLflow server for RyotenkAI with PostgreSQL (metadata), MinIO
+(S3-compatible artifact storage), and a Caddy reverse proxy enforcing HTTP
+basic-auth in front of the MLflow UI/API.
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   MLflow     │────▶│  PostgreSQL  │     │    MinIO     │
-│   Server     │────▶│  (metadata)  │     │  (artifacts) │
-│  :5002       │     │  :5432       │     │  :9000/:9001 │
-└─────────────┘     └─────────────┘     └─────────────┘
+                    ┌──────────────────┐
+   public/local ───▶│  Caddy (:5002)   │── basic-auth ──┐
+                    └──────────────────┘                 │
+                                                         ▼
+                    ┌──────────────────┐     ┌────────────────┐     ┌─────────────┐
+                    │  MLflow Server   │────▶│  PostgreSQL    │     │   MinIO     │
+                    │  (internal :5102)│────▶│  (metadata)    │     │ (artifacts) │
+                    └──────────────────┘     └────────────────┘     └─────────────┘
+                                                                            ▲
+                                                                            │
+                              (--serve-artifacts proxies all artifact I/O)──┘
 ```
 
-- **MLflow Server** — tracking UI + artifact proxy (`http://localhost:5002`)
-- **PostgreSQL 16** — stores runs, params, metrics
-- **MinIO** — S3-compatible storage for model artifacts, plots, logs
+- **Caddy** — reverse proxy, the ONLY external entry point. Listens on
+  `:5002`, enforces HTTP basic-auth, exposes `/health` unauthenticated for
+  Tailscale Funnel probes.
+- **MLflow Server** — tracking UI + artifact proxy on internal `:5102`. Not
+  published to the host; reachable only through Caddy via the docker
+  network.
+- **PostgreSQL 16** — stores runs, params, metrics.
+- **MinIO** — S3-compatible storage for model artifacts, plots, logs. The
+  bucket is **private**: anonymous read was removed in Phase M6, and all
+  artifact I/O goes through MLflow's `--serve-artifacts` (which is
+  itself behind basic-auth via Caddy).
 
 ## Quick Start
+
+Before the first start you MUST configure Caddy basic-auth credentials —
+the stack will refuse to come up otherwise.
 
 ```bash
 cd docker/mlflow
 
-# Start all services (creates .env.mlflow from template on first run)
+# 1. Generate a bcrypt hash of the password you want for MLflow access.
+#    Paste the output (starts with $2a$ or $2b$) somewhere safe.
+docker run --rm caddy:2-alpine caddy hash-password --plaintext 'YOUR_PASSWORD'
+
+# 2. Add to .env.mlflow (alongside the existing POSTGRES_* / MINIO_* vars):
+#
+#      CADDY_BASIC_AUTH_USER=mlflow_user
+#      CADDY_BASIC_AUTH_HASH=$2a$14$........<paste-hash-here>........
+#
+#    Bcrypt hashes contain `$` characters — do NOT wrap the value in
+#    double quotes (compose would interpolate it). Either leave it
+#    unquoted or use single quotes.
+
+# 3. Start all services
 ./start.sh
 
 # Check status
@@ -34,11 +66,26 @@ cd docker/mlflow
 ./start.sh stop
 ```
 
-The stack works immediately with dev defaults from `.env.mlflow` — no manual configuration needed.
-
 After startup:
-- **MLflow UI:** http://localhost:5002
-- **MinIO Console:** http://localhost:9001 (login: `minio_admin` / `minio_dev_pass`)
+- **MLflow UI:** http://localhost:5002 — prompts for the basic-auth
+  credentials configured above.
+- **MinIO Console:** http://localhost:9001 (login: whatever
+  `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` you set).
+
+### Why basic-auth?
+
+The MLflow server itself ships with no authentication. Putting Caddy in
+front of it is the cheapest way to keep the UI and tracking API behind a
+shared secret when exposed via Tailscale Funnel. The `/health` endpoint
+stays open so the Funnel probe can reach it.
+
+### Why is MinIO private now?
+
+Phase M6 removed `mc anonymous set download minio/${MINIO_BUCKET}` from
+the bucket-init step. Previously anyone with the public URL of the bucket
+could fetch any artifact. All artifact reads/writes now go through the
+MLflow server's `--serve-artifacts` proxy, which is itself behind
+basic-auth.
 
 ## Pipeline Configuration
 
@@ -120,19 +167,43 @@ MINIO_BUCKET=mlflow
 MINIO_API_PORT=9000
 MINIO_CONSOLE_PORT=9001
 
+# External port the Caddy reverse proxy listens on. MLflow itself is
+# internal-only on :5102 inside the docker network.
 MLFLOW_PORT=5002
+
+# Required: Caddy basic-auth credentials. Generate the hash with:
+#   docker run --rm caddy:2-alpine caddy hash-password --plaintext '...'
+CADDY_BASIC_AUTH_USER=mlflow_user
+CADDY_BASIC_AUTH_HASH=$2a$14$replace_with_real_bcrypt_hash
+
+# Required when exposing publicly (allowed-hosts non-empty). Generate with:
+#   python -c "import secrets; print(secrets.token_urlsafe(48))"
+MLFLOW_FLASK_SERVER_SECRET_KEY=replace_with_random_secret
 ```
 
-> **Note:** Change passwords before any non-local usage.
+> **Note:** Change passwords before any non-local usage. The bcrypt hash
+> contains `$` characters — do NOT double-quote the value in `.env.mlflow`.
+
+### Generating `MLFLOW_FLASK_SERVER_SECRET_KEY`
+
+The Flask session secret signs MLflow's session cookies and CSRF tokens.
+Phase M6 made the entrypoint refuse to start when
+`MLFLOW_SERVER_ALLOWED_HOSTS` is set but this secret is empty — an empty
+secret would let an attacker forge sessions over the public endpoint.
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
 
 ## File Structure
 
 ```
 docker/mlflow/
-├── docker-compose.mlflow.yml  # Service definitions
+├── docker-compose.mlflow.yml  # Service definitions (postgres/minio/mlflow/caddy)
+├── Caddyfile                   # Reverse-proxy config with basic-auth
 ├── Dockerfile.mlflow           # MLflow image (+ psycopg2, boto3)
 ├── .dockerignore
-├── .env.mlflow                 # Environment config (dev defaults, works out of the box)
+├── .env.mlflow                 # Environment config (NOT committed; secrets live here)
 ├── entrypoint.mlflow.sh        # MLflow startup with optional security flags
 ├── expose-tailscale.sh         # Public HTTPS access via Tailscale Funnel
 ├── start.sh                    # Startup/management script

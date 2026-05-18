@@ -44,7 +44,10 @@ services:
     networks:
       - mlflow_network
 
-  # MinIO Init - creates bucket for MLflow
+  # MinIO Init - creates bucket for MLflow.
+  # Anonymous public-download policy was removed in Phase M6: artifacts are
+  # now reachable only through the MLflow server (--serve-artifacts is on),
+  # so the bucket stays private. Do NOT add `mc anonymous set download` here.
   minio-init:
     image: minio/mc:latest
     container_name: mlflow_minio_init
@@ -53,16 +56,18 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      echo '🔧 Configuring MinIO...';
+      echo 'Configuring MinIO...';
       mc alias set minio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
       mc mb minio/${MINIO_BUCKET} --ignore-existing;
-      mc anonymous set download minio/${MINIO_BUCKET};
-      echo 'MinIO bucket created: ${MINIO_BUCKET}';
+      echo 'MinIO bucket ensured (private): ${MINIO_BUCKET}';
       "
     networks:
       - mlflow_network
 
-  # MLflow Server - tracking server with artifact proxy
+  # MLflow Server - tracking server with artifact proxy.
+  # As of Phase M6 the MLflow port (5102) is NOT published to the host —
+  # only mlflow_caddy reaches it via the internal `mlflow_network`. External
+  # access goes through Caddy on ${MLFLOW_PORT:-5002} with basic-auth.
   mlflow:
     build:
       context: .
@@ -86,12 +91,16 @@ services:
       BACKEND_STORE_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       ARTIFACTS_DESTINATION: s3://${MINIO_BUCKET}
       MLFLOW_APP_NAME: ${MLFLOW_APP_NAME:-}
+      # Internal listen port; do NOT expose to the host.
+      MLFLOW_INTERNAL_PORT: "5102"
+      # External port the user-facing Caddy proxy listens on; used for
+      # allowed-hosts whitelisting of localhost variants.
       MLFLOW_HOST_PORT: ${MLFLOW_PORT:-5002}
       MLFLOW_SERVER_ALLOWED_HOSTS: ${MLFLOW_SERVER_ALLOWED_HOSTS:-}
       MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: ${MLFLOW_SERVER_CORS_ALLOWED_ORIGINS:-}
       MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SERVER_SECRET_KEY:-}
-    ports:
-      - "${MLFLOW_PORT:-5002}:5000"
+    expose:
+      - "5102"
     healthcheck:
       # NOTE: base MLflow image doesn't include curl. Use Python stdlib instead.
       test:
@@ -99,7 +108,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=2).read()",
+          "import urllib.request; urllib.request.urlopen('http://localhost:5102/health', timeout=2).read()",
         ]
       interval: 10s
       timeout: 5s
@@ -108,10 +117,36 @@ services:
     networks:
       - mlflow_network
 
+  # Caddy reverse proxy - the ONLY external entry point to MLflow.
+  # Enforces HTTP basic-auth using bcrypt hash from $CADDY_BASIC_AUTH_HASH.
+  # Exposes /health unauthenticated so Tailscale Funnel probes succeed.
+  mlflow_caddy:
+    image: caddy:2-alpine
+    container_name: mlflow_caddy
+    restart: unless-stopped
+    ports:
+      - "${MLFLOW_PORT:-5002}:5002"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      CADDY_BASIC_AUTH_USER: ${CADDY_BASIC_AUTH_USER:?Set CADDY_BASIC_AUTH_USER in .env.mlflow}
+      CADDY_BASIC_AUTH_HASH: ${CADDY_BASIC_AUTH_HASH:?Set CADDY_BASIC_AUTH_HASH in .env.mlflow (bcrypt; generate via 'docker run --rm caddy:2-alpine caddy hash-password --plaintext ...')}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlflow_network
+
 volumes:
   postgres_data:
     driver: local
   minio_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
     driver: local
 
 networks:
