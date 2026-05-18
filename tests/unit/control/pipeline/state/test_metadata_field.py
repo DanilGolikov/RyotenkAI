@@ -9,7 +9,9 @@ logic-specific.
 
 from __future__ import annotations
 
-from ryotenkai_control.pipeline.mlflow_attempt.manager import _stringify_tag_value
+from ryotenkai_control.pipeline.mlflow.lifecycle._tag_utils import (
+    stringify_tag_value as _stringify_tag_value,
+)
 from ryotenkai_control.pipeline.state.models import PipelineAttemptState, PipelineState, StageRunState
 
 # ---------------------------------------------------------------------------
@@ -249,7 +251,7 @@ class TestLogicSpecific:
 
     def test_stringify_value_at_exactly_limit_passthrough(self) -> None:
         # A value exactly at the cap should NOT be truncated.
-        from ryotenkai_control.pipeline.mlflow_attempt.manager import (
+        from ryotenkai_control.pipeline.mlflow.lifecycle._tag_utils import (
             _MLFLOW_TAG_VALUE_MAX_CHARS,
         )
 
@@ -259,7 +261,7 @@ class TestLogicSpecific:
         assert "…" not in out
 
     def test_stringify_value_one_over_limit_gets_truncated(self) -> None:
-        from ryotenkai_control.pipeline.mlflow_attempt.manager import (
+        from ryotenkai_control.pipeline.mlflow.lifecycle._tag_utils import (
             _MLFLOW_TAG_VALUE_MAX_CHARS,
         )
 

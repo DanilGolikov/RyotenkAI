@@ -27,20 +27,14 @@ is covered by unit tests + the :mod:`test_dedup_resume` integration).
 
 from __future__ import annotations
 
-import hashlib
-import json
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from ryotenkai_control.events import (
     ControlEventEmitter,
     JournalReader,
-    MlflowFinalizer,
 )
-from ryotenkai_control.events.mlflow_finalizer import MANIFEST_FILENAME
 from ryotenkai_shared.events import from_jsonl
 from ryotenkai_shared.events.types.control_run import (
     RunCompletedEvent,
@@ -67,41 +61,6 @@ from ryotenkai_shared.events.types.pod_training import (
     TrainingStepPayload,
 )
 from ryotenkai_shared.events import UNKNOWN_OFFSET
-
-
-# ---------------------------------------------------------------------------
-# Test doubles
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _ArtifactCall:
-    local_path: str
-    artifact_path: str | None
-    run_id: str | None
-
-
-@dataclass
-class _RecorderMlflowManager:
-    """Minimal recorder fake for :class:`IMLflowManager.log_artifact`.
-
-    The finalizer only consumes one method (``log_artifact``); a full
-    :class:`FakeMLflowManager` would over-complicate the test surface
-    and pull in run-state bookkeeping that's irrelevant here.
-    """
-
-    calls: list[_ArtifactCall] = field(default_factory=list)
-
-    def log_artifact(
-        self,
-        local_path: str,
-        artifact_path: str | None = None,
-        run_id: str | None = None,
-    ) -> bool:
-        self.calls.append(
-            _ArtifactCall(local_path=local_path, artifact_path=artifact_path, run_id=run_id),
-        )
-        return True
 
 
 # ---------------------------------------------------------------------------
@@ -357,97 +316,10 @@ class TestE2EPipeline:
                 # MalformedEventError; the test fails if either fires.
                 from_jsonl(line, strict=True)
 
-    def test_manifest_sha256_matches_journal_bytes(self, tmp_path: Path) -> None:
-        run_dir = tmp_path / "run-sha"
-        emitter = ControlEventEmitter.for_run(
-            run_id="run-sha", run_directory=run_dir,
-        )
-        _emit_full_pipeline(emitter, "run-sha")
-        emitter.close()
-
-        journal_path = run_dir / "events.jsonl"
-        # Compute the journal file's sha256 ourselves — the finalizer
-        # MUST agree.
-        expected_sha = hashlib.sha256(journal_path.read_bytes()).hexdigest()
-
-        recorder = _RecorderMlflowManager()
-        # Use a single zero-delay attempt — succeeds immediately on the
-        # happy path. Empty tuple means "0 attempts" which short-circuits.
-        finalizer = MlflowFinalizer(
-            recorder,  # type: ignore[arg-type]
-            retry_delays_s=(0.0,),
-            sleep=lambda _: None,
-        )
-        uploaded = finalizer.upload(
-            run_id="run-sha",
-            journal_path=journal_path,
-        )
-        assert uploaded is True
-
-        manifest_path = run_dir / MANIFEST_FILENAME
-        assert manifest_path.exists()
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert manifest["events_sha256"] == expected_sha
-        assert manifest["mlflow_uploaded"] is True
-        assert manifest["journal_complete"] is True
-
-    def test_manifest_total_events_matches_journal(self, tmp_path: Path) -> None:
-        """The manifest's ``total_events`` equals the number of well-formed lines."""
-        run_dir = tmp_path / "run-count"
-        emitter = ControlEventEmitter.for_run(
-            run_id="run-count", run_directory=run_dir,
-        )
-        _emit_full_pipeline(emitter, "run-count")
-        emitter.close()
-
-        journal_path = run_dir / "events.jsonl"
-        line_count = sum(
-            1 for line in journal_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        )
-
-        recorder = _RecorderMlflowManager()
-        finalizer = MlflowFinalizer(
-            recorder,  # type: ignore[arg-type]
-            retry_delays_s=(0.0,),
-            sleep=lambda _: None,
-        )
-        finalizer.upload(run_id="run-count", journal_path=journal_path)
-
-        manifest = json.loads(
-            (run_dir / MANIFEST_FILENAME).read_text(encoding="utf-8"),
-        )
-        assert manifest["total_events"] == line_count
-
-    def test_per_source_offset_bookkeeping_landed_in_manifest(
-        self, tmp_path: Path,
-    ) -> None:
-        run_dir = tmp_path / "run-src"
-        emitter = ControlEventEmitter.for_run(
-            run_id="run-src", run_directory=run_dir,
-        )
-        _emit_full_pipeline(emitter, "run-src")
-        emitter.close()
-
-        journal_path = run_dir / "events.jsonl"
-        recorder = _RecorderMlflowManager()
-        finalizer = MlflowFinalizer(
-            recorder,  # type: ignore[arg-type]
-            retry_delays_s=(0.0,),
-            sleep=lambda _: None,
-        )
-        finalizer.upload(run_id="run-src", journal_path=journal_path)
-
-        manifest = json.loads(
-            (run_dir / MANIFEST_FILENAME).read_text(encoding="utf-8"),
-        )
-        # Manifest should track both producers separately.
-        first = manifest["first_offset_per_source"]
-        last = manifest["last_offset_per_source"]
-        assert "control://orchestrator" in first
-        assert any("pod://" in s for s in first)
-        # First offset per source is always 0 in our scenario.
-        assert first["control://orchestrator"] == 0
-        # And last >= first.
-        for src in first:
-            assert last[src] >= first[src]
+    # Phase M7.2 — manifest-related tests removed alongside the
+    # legacy ``ryotenkai_control.events.mlflow_finalizer`` module.
+    # Journal upload is now driven by the new
+    # :class:`MlflowFinalizer` in
+    # :mod:`ryotenkai_control.pipeline.mlflow.lifecycle.finalizer`
+    # and covered by its own unit tests; the manifest contract no
+    # longer exists.

@@ -50,7 +50,6 @@ from typing import TYPE_CHECKING
 from ryotenkai_control.events import (
     ControlEventEmitter,
     EventEmitterRegistry,
-    MlflowFinalizer,
 )
 from ryotenkai_shared.events import UNKNOWN_OFFSET
 from ryotenkai_shared.events.types.control_run import (
@@ -347,21 +346,28 @@ class RunLifecycleCoordinator:
     # ------------------------------------------------------------------
 
     def finalize(self, *, pipeline_success: bool) -> None:
-        """Flush + close emitter, upload journal to MLflow, deregister.
+        """Flush + close emitter, then deregister from the registry.
 
-        Order (matches the pre-refactor orchestrator finally block):
+        Phase M7.2 — the legacy MLflow journal upload moved to the new
+        :class:`~ryotenkai_control.pipeline.mlflow.lifecycle.coord.RunLifecycleCoord`
+        path (driven by :meth:`PipelineOrchestrator._teardown_mlflow_attempt`).
+        This coordinator now only owns the event-emitter side of the
+        lifecycle: emitter close + registry deregister.
+
+        Order (matches the pre-refactor orchestrator finally block,
+        minus the now-removed MLflow upload step):
 
         1. :meth:`ControlEventEmitter.close` — final fsync, sweeper stop.
-        2. :class:`MlflowFinalizer` upload with cancellation/journal-
-           completeness flags derived from the shutdown signal and the
-           ``pipeline_success`` outcome.
-        3. :class:`EventEmitterRegistry` deregister so a crashed run
+        2. :class:`EventEmitterRegistry` deregister so a crashed run
            still releases its slot.
 
         Each step is wrapped in its own try/except so a failure in one
         does not skip the others. Idempotent — calling :meth:`finalize`
         a second time is a no-op.
         """
+        # ``pipeline_success`` is retained on the signature for callers
+        # but no longer affects behaviour — kept for API stability.
+        del pipeline_success
         if self._closed:
             return
         # Mark closed first so any racy emit_run_* call after finalize
@@ -379,12 +385,6 @@ class RunLifecycleCoordinator:
             logger.exception(
                 "[RunLifecycleCoordinator] event emitter close failed",
             )
-        try:
-            self._finalize_events_to_mlflow(pipeline_success=pipeline_success)
-        except Exception:
-            logger.exception(
-                "[RunLifecycleCoordinator] MLflow events finalize failed",
-            )
         self._safe_deregister()
 
     def _safe_deregister(self) -> None:
@@ -396,53 +396,6 @@ class RunLifecycleCoordinator:
             logger.exception(
                 "[RunLifecycleCoordinator] EventEmitterRegistry.deregister failed",
             )
-
-    def _finalize_events_to_mlflow(self, *, pipeline_success: bool) -> None:
-        """Upload events.jsonl + manifest to MLflow via :class:`MlflowFinalizer`.
-
-        Cancellation reason and the ``journal_complete`` flag are derived
-        from the shutdown signal supplier (populated by the
-        SIGINT/SIGTERM handlers / KeyboardInterrupt branch) and the
-        ``pipeline_success`` outcome.
-        """
-        emitter = self._emitter
-        if emitter is None:
-            return
-        manager = self._mlflow_manager_supplier()
-        if manager is None:
-            logger.debug(
-                "[RunLifecycleCoordinator] MLflow manager unavailable; "
-                "skipping events finalize",
-            )
-            return
-        journal_path = emitter.journal.path
-        if not journal_path.exists():
-            logger.debug(
-                "[RunLifecycleCoordinator] journal missing at finalize "
-                "time; skipping",
-            )
-            return
-        cancellation_reason: str | None = None
-        journal_complete = True
-        shutdown_signal = self._shutdown_signal_supplier()
-        if shutdown_signal:
-            cancellation_reason = f"signal:{shutdown_signal}"
-            journal_complete = False
-        elif not pipeline_success:
-            # Failure case — journal IS complete (the orchestrator wrote
-            # the RunFailedEvent before entering finalize), but consumers
-            # may still want to distinguish success from failure uploads.
-            cancellation_reason = None
-        mlflow_run_id = (
-            self._mlflow_run_id_supplier() or self._run_ctx.name
-        )
-        finalizer = MlflowFinalizer(manager)
-        finalizer.upload(
-            run_id=mlflow_run_id,
-            journal_path=journal_path,
-            cancellation_reason=cancellation_reason,
-            journal_complete=journal_complete,
-        )
 
     # ------------------------------------------------------------------
     # Helpers

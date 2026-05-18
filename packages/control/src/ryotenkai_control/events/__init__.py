@@ -34,7 +34,6 @@ from ryotenkai_control.events.metrics import (
     collect_metrics,
     collect_metrics_for_emitter,
 )
-from ryotenkai_control.events.mlflow_finalizer import MlflowFinalizer
 from ryotenkai_control.events.registry import EventEmitterRegistry
 from ryotenkai_control.events.replay import slice_journal
 
@@ -47,7 +46,6 @@ __all__ = [
     "InMemoryBus",
     "JournalReader",
     "JournalWriter",
-    "MlflowFinalizer",
     "collect_metrics",
     "collect_metrics_for_emitter",
     "slice_journal",

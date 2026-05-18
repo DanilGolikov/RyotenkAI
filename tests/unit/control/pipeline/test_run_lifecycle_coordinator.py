@@ -1,22 +1,26 @@
 """Tests for :class:`ryotenkai_control.pipeline.run_lifecycle_coordinator.RunLifecycleCoordinator`.
 
-The coordinator owns the event-emitter + MlflowFinalizer + registry
-lifecycle that the Phase 8 (TODO #4) refactor lifted out of the
-orchestrator. These tests exercise the seven canonical classes from
-``docs/testing/mock_policy.md``:
+Phase M7.2 — the legacy MLflow journal upload moved out of this
+coordinator into the new
+:class:`ryotenkai_control.pipeline.mlflow.lifecycle.coord.RunLifecycleCoord`
+path (driven from the orchestrator's ``_teardown_mlflow_attempt``).
+The events-side coordinator now owns only the event-emitter lifecycle
+(emitter close + registry deregister); the MLflow manifest tests that
+previously lived here moved with the implementation.
+
+The remaining seven canonical classes from
+``docs/testing/mock_policy.md`` exercised below:
 
 * TestPositive — happy-path bind + emit
 * TestNegative — finalize before bind is a no-op
 * TestBoundary — double bind returns same emitter (idempotent)
-* TestInvariants — finalize closes emitter + deregisters + uploads
-* TestDependencyErrors — MlflowFinalizer raising does NOT raise
+* TestInvariants — finalize closes emitter + deregisters
 * TestRegressions — emit after finalize is a no-op (no crash)
-* TestLogicSpecific — cancellation reason propagates to manifest
+* TestLogicSpecific — active stage drives ``failing_stage``
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,7 +32,6 @@ from ryotenkai_control.events import (
     EventEmitterRegistry,
     JournalReader,
 )
-from ryotenkai_control.events.mlflow_finalizer import MANIFEST_FILENAME
 from ryotenkai_control.pipeline.run_lifecycle_coordinator import (
     RunLifecycleCoordinator,
 )
@@ -57,7 +60,9 @@ class _ArtifactCall:
 
 @dataclass
 class _FakeMlflowManager:
-    """Records ``log_artifact`` calls with optional fail injection."""
+    """Records ``log_artifact`` calls (no longer driven by the events coord
+    after Phase M7.2; retained for tests that simulate the wider manager
+    presence)."""
 
     calls: list[_ArtifactCall] = field(default_factory=list)
     fail_next: int = 0
@@ -80,8 +85,6 @@ class _FakeMlflowManager:
         )
         return True
 
-    # IMLflowManager Protocol surface — the coordinator only calls
-    # ``log_artifact``; any other call is a test failure.
     def __getattr__(self, name: str) -> Any:  # pragma: no cover — defensive
         def _stub(*_a: Any, **_kw: Any) -> Any:
             raise AssertionError(
@@ -142,7 +145,7 @@ class TestPositive:
         envelopes = list(
             JournalReader(run_dir / "events.jsonl").iter_envelopes(),
         )
-        # First envelope is RunStarted; FYI finalize may have appended none.
+        # First envelope is RunStarted; finalize may have appended none.
         assert envelopes[0].kind == "ryotenkai.control.run.started"
         assert envelopes[0].payload.config_hash == "deadbeef"
         assert envelopes[0].payload.algorithm == "sft"
@@ -200,7 +203,7 @@ class TestBoundary:
 
 
 # ---------------------------------------------------------------------------
-# 4. INVARIANTS — finalize closes emitter + deregisters + uploads
+# 4. INVARIANTS — finalize closes emitter + deregisters
 # ---------------------------------------------------------------------------
 
 
@@ -217,22 +220,6 @@ class TestInvariants:
         # Registry slot is released.
         assert EventEmitterRegistry.instance().get(ctx.name) is None
 
-    def test_finalize_uploads_journal_via_mlflow(self, tmp_path: Path) -> None:
-        mlflow = _FakeMlflowManager()
-        coord = _make_coordinator(mlflow_manager=mlflow)
-        run_dir = tmp_path / "r"
-        coord.bind_run_directory(run_dir)
-        coord.emit_run_started(config_hashes={"merged": "h"})
-        coord.finalize(pipeline_success=True)
-        # MlflowFinalizer.upload made two log_artifact calls — journal +
-        # manifest.
-        assert len(mlflow.calls) == 2
-        paths = {Path(c.local_path).name for c in mlflow.calls}
-        assert "events.jsonl" in paths
-        assert MANIFEST_FILENAME in paths
-        # mlflow run id propagates from supplier.
-        assert all(c.run_id == "mlflow-run-1" for c in mlflow.calls)
-
     def test_finalize_is_idempotent(self, tmp_path: Path) -> None:
         coord = _make_coordinator()
         coord.bind_run_directory(tmp_path / "r")
@@ -243,39 +230,7 @@ class TestInvariants:
 
 
 # ---------------------------------------------------------------------------
-# 5. DEPENDENCY ERRORS — MlflowFinalizer failures do not raise
-# ---------------------------------------------------------------------------
-
-
-class TestDependencyErrors:
-    def test_finalize_swallows_mlflow_upload_failures(
-        self, tmp_path: Path,
-    ) -> None:
-        mlflow = _FakeMlflowManager(fail_next=10)  # exhaust retry budget
-        coord = _make_coordinator(mlflow_manager=mlflow)
-        coord.bind_run_directory(tmp_path / "r")
-        coord.emit_run_started(config_hashes={"merged": "h"})
-        # Must NOT raise even though every upload attempt fails.
-        coord.finalize(pipeline_success=True)
-        # Manifest should still exist on disk; it just records
-        # ``mlflow_uploaded=False``.
-        manifest_path = tmp_path / "r" / MANIFEST_FILENAME
-        assert manifest_path.exists()
-        manifest = json.loads(manifest_path.read_text("utf-8"))
-        assert manifest["mlflow_uploaded"] is False
-
-    def test_finalize_skips_upload_when_mlflow_manager_missing(
-        self, tmp_path: Path,
-    ) -> None:
-        coord = _make_coordinator(mlflow_manager=None)
-        coord.bind_run_directory(tmp_path / "r")
-        coord.finalize(pipeline_success=True)
-        # No manifest should be written because the manager is absent.
-        assert not (tmp_path / "r" / MANIFEST_FILENAME).exists()
-
-
-# ---------------------------------------------------------------------------
-# 6. REGRESSIONS — emit after finalize must not crash
+# 5. REGRESSIONS — emit after finalize must not crash
 # ---------------------------------------------------------------------------
 
 
@@ -297,41 +252,11 @@ class TestRegressions:
 
 
 # ---------------------------------------------------------------------------
-# 7. LOGIC-SPECIFIC — cancellation reason propagates to manifest
+# 6. LOGIC-SPECIFIC — active stage drives ``failing_stage``
 # ---------------------------------------------------------------------------
 
 
 class TestLogicSpecific:
-    def test_cancellation_signal_sets_manifest_flags(self, tmp_path: Path) -> None:
-        mlflow = _FakeMlflowManager()
-        coord = _make_coordinator(
-            mlflow_manager=mlflow,
-            shutdown_signal="SIGINT",
-        )
-        coord.bind_run_directory(tmp_path / "r")
-        coord.emit_run_started(config_hashes={"merged": "h"})
-        coord.emit_run_cancelled(reason="user_interrupt")
-        coord.finalize(pipeline_success=False)
-        manifest_path = tmp_path / "r" / MANIFEST_FILENAME
-        manifest = json.loads(manifest_path.read_text("utf-8"))
-        assert manifest["cancellation_reason"] == "signal:SIGINT"
-        assert manifest["journal_complete"] is False
-
-    def test_failure_without_signal_keeps_journal_complete(
-        self, tmp_path: Path,
-    ) -> None:
-        mlflow = _FakeMlflowManager()
-        coord = _make_coordinator(mlflow_manager=mlflow)
-        coord.bind_run_directory(tmp_path / "r")
-        coord.emit_run_started(config_hashes={"merged": "h"})
-        coord.emit_run_failed(RuntimeError("boom"))
-        coord.finalize(pipeline_success=False)
-        manifest_path = tmp_path / "r" / MANIFEST_FILENAME
-        manifest = json.loads(manifest_path.read_text("utf-8"))
-        # Failure case — journal is complete (RunFailed was emitted).
-        assert manifest["journal_complete"] is True
-        assert manifest["cancellation_reason"] is None
-
     def test_active_stage_supplier_drives_failing_stage_field(
         self, tmp_path: Path,
     ) -> None:

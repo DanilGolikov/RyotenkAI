@@ -26,6 +26,9 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import getpass
+import socket
+
 from ryotenkai_control.events import ControlEventEmitter
 from ryotenkai_control.pipeline.bootstrap.startup_validator import StartupValidator
 from ryotenkai_control.pipeline.config_drift import ConfigDriftValidator
@@ -37,11 +40,21 @@ from ryotenkai_control.pipeline.execution import (
     StageRegistry,
 )
 from ryotenkai_control.pipeline.launch import LaunchPreparator
+from ryotenkai_control.pipeline.mlflow.lifecycle import (
+    MlflowFinalizer,
+    ParentRunOpener,
+    PreflightConnectivityCheck,
+    RunLifecycleCoord,
+)
+from ryotenkai_control.pipeline.mlflow.read.client import MlflowReadClient
 from ryotenkai_control.pipeline.mlflow_attempt import MLflowAttemptManager
 from ryotenkai_control.pipeline.reporting import ExecutionSummaryReporter
 from ryotenkai_control.pipeline.stages import PipelineContextKeys
 from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
 from ryotenkai_shared.config import load_secrets
+from ryotenkai_shared.infrastructure.mlflow.journal_uploader import JournalUploader
+from ryotenkai_shared.infrastructure.mlflow.transport import MlflowTransport
+from ryotenkai_shared.infrastructure.mlflow.uri import RuntimeUriResolver
 from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
@@ -119,6 +132,19 @@ class BootstrapResult:
     launch_preparator: LaunchPreparator
     restart_inspector: RestartPointsInspector
     stage_execution_loop: StageExecutionLoop
+    # Phase M2/M7.2 — new narrow MLflow lifecycle stack (separate from
+    # legacy wide :class:`MLflowAttemptManager`, which still drives the
+    # IMLflowManager surface consumed by 6+ stage callers). The
+    # orchestrator owns the timing: open/close/preflight all go
+    # through these collaborators; ``mlflow_attempt`` retained for
+    # the wide-manager surface only.
+    mlflow_transport: MlflowTransport | None = None
+    mlflow_run_query: MlflowReadClient | None = None
+    mlflow_journal_uploader: JournalUploader | None = None
+    mlflow_preflight: PreflightConnectivityCheck | None = None
+    mlflow_opener: ParentRunOpener | None = None
+    mlflow_finalizer: MlflowFinalizer | None = None
+    mlflow_coord: RunLifecycleCoord | None = None
     # Optional: control-side event emitter. ``None`` when bootstrap
     # was called without a ``run_directory`` — the orchestrator builds
     # it lazily inside :meth:`_prepare_stateful_attempt` once
@@ -266,6 +292,23 @@ class PipelineBootstrap:
         summary_reporter = ExecutionSummaryReporter(config)
         mlflow_attempt = MLflowAttemptManager(config, config_path)
 
+        # Phase M7.2 — narrow MLflow lifecycle stack alongside the
+        # legacy wide manager. The stack is built only when the
+        # MLflow integration is reachable (URI configured); ``None``
+        # values mean the orchestrator's _setup_mlflow_for_attempt /
+        # _ensure_mlflow_preflight degrade to no-ops just like the
+        # legacy path. The wide-manager (``mlflow_attempt``) is retained
+        # because 6+ stages still consume the IMLflowManager surface.
+        (
+            mlflow_transport,
+            mlflow_run_query,
+            mlflow_journal_uploader,
+            mlflow_preflight,
+            mlflow_opener,
+            mlflow_finalizer,
+            mlflow_coord,
+        ) = _build_mlflow_lifecycle_stack(config)
+
         # Step 5: Stages + registry. Stages need validation_artifact_mgr
         # for DatasetValidator's event callbacks, so build them after.
         # When ``stages_override`` is supplied (tests / advanced callers),
@@ -349,8 +392,79 @@ class PipelineBootstrap:
             launch_preparator=launch_preparator,
             restart_inspector=restart_inspector,
             stage_execution_loop=stage_execution_loop,
+            mlflow_transport=mlflow_transport,
+            mlflow_run_query=mlflow_run_query,
+            mlflow_journal_uploader=mlflow_journal_uploader,
+            mlflow_preflight=mlflow_preflight,
+            mlflow_opener=mlflow_opener,
+            mlflow_finalizer=mlflow_finalizer,
+            mlflow_coord=mlflow_coord,
             emitter=emitter,
         )
+
+
+def _build_mlflow_lifecycle_stack(
+    config: PipelineConfig,
+) -> tuple[
+    MlflowTransport | None,
+    MlflowReadClient | None,
+    JournalUploader | None,
+    PreflightConnectivityCheck | None,
+    ParentRunOpener | None,
+    MlflowFinalizer | None,
+    RunLifecycleCoord | None,
+]:
+    """Compose the narrow MLflow lifecycle stack (Phase M7.2).
+
+    The stack is built only when at least one of
+    ``config.integrations.mlflow.local_tracking_uri`` or ``tracking_uri``
+    resolves; otherwise the orchestrator transparently degrades to the
+    "no MLflow" branch (every ``setup_for_attempt`` / ``ensure_preflight``
+    call already short-circuits when the wide manager is ``None``).
+
+    :param config: Pre-loaded :class:`PipelineConfig`.
+    :returns: Tuple of (transport, run_query, journal_uploader, preflight,
+        opener, finalizer, coord); each is ``None`` when the stack cannot
+        be built (no URI configured, transport import failure, ...).
+    """
+    try:
+        mlflow_cfg = config.integrations.mlflow
+        runtime_uri = RuntimeUriResolver.for_control_plane(mlflow_cfg)
+        auth_cfg = getattr(mlflow_cfg, "auth", None)
+        ca_bundle_path = getattr(mlflow_cfg, "ca_bundle_path", None)
+        transport = MlflowTransport(
+            runtime_uri=runtime_uri,
+            auth=auth_cfg,
+            ca_bundle_path=ca_bundle_path,
+        )
+        run_query = MlflowReadClient(tracking_uri=runtime_uri.uri)
+        journal_uploader = JournalUploader(transport)
+        try:
+            opened_by = f"{socket.gethostname()}:{getpass.getuser()}"
+        except Exception:
+            # Fall back to a synthetic identifier so the opener still
+            # has a non-empty ``opened_by`` (it rejects "").
+            opened_by = "unknown:unknown"
+        preflight = PreflightConnectivityCheck(transport)
+        opener = ParentRunOpener(transport, opened_by=opened_by)
+        finalizer = MlflowFinalizer(transport, journal_uploader, run_query)
+        coord = RunLifecycleCoord(opener, finalizer, preflight)
+    except Exception as exc:
+        logger.warning(
+            "MLflow lifecycle stack not constructed (degrading to "
+            "no-MLflow mode): %s",
+            exc,
+        )
+        return None, None, None, None, None, None, None
+    return (
+        transport,
+        run_query,
+        journal_uploader,
+        preflight,
+        opener,
+        finalizer,
+        coord,
+    )
 
 
 __all__ = ["BootstrapResult", "PipelineBootstrap"]

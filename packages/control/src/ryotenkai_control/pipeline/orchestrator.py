@@ -23,9 +23,18 @@ from ryotenkai_control.pipeline.constants import (
 )
 from ryotenkai_control.pipeline.launch import LaunchPreparationError, PreparedAttempt
 from ryotenkai_control.pipeline.launch.run_lock_guard import RunLockGuard
+from ryotenkai_control.pipeline.mlflow.lifecycle import (
+    RunLifecycleCoord as _MLflowLifecycleCoord,
+)
+from ryotenkai_control.pipeline.mlflow.lifecycle.orchestrator_glue import (
+    open_attempt_with_coord,
+    run_preflight_or_fallback,
+    stamp_state_tracking_uri,
+    teardown_attempt_with_coord,
+)
 from ryotenkai_control.pipeline.reporting import ExecutionSummaryReporter
 from ryotenkai_control.pipeline.run_lifecycle_coordinator import (
-    RunLifecycleCoordinator,
+    RunLifecycleCoordinator as _EventLifecycleCoordinator,
 )
 from ryotenkai_control.pipeline.stages import StageNames
 from ryotenkai_control.pipeline.state import (
@@ -49,9 +58,19 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ryotenkai_control.events import ControlEventEmitter
+    from ryotenkai_control.pipeline.mlflow.lifecycle import (
+        MlflowFinalizer,
+        ParentRunOpener,
+        PreflightConnectivityCheck,
+    )
+    from ryotenkai_control.pipeline.mlflow.read.client import MlflowReadClient
     from ryotenkai_control.pipeline.stages.base import PipelineStage
     from ryotenkai_shared.config.pipeline.schema import PipelineConfig
+    from ryotenkai_shared.infrastructure.mlflow.journal_uploader import (
+        JournalUploader,
+    )
     from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
+    from ryotenkai_shared.infrastructure.mlflow.transport import MlflowTransport
     from ryotenkai_shared.utils.logs_layout import LogLayout
 
 # Re-export from the launch package so downstream test imports keep working
@@ -190,11 +209,12 @@ class PipelineOrchestrator:
         self._stage_execution_loop = bootstrap.stage_execution_loop
 
         # Phase 8: hand the event-emitter lifecycle to
-        # :class:`RunLifecycleCoordinator`. The coordinator owns lazy
-        # construction once LaunchPreparator resolves the run dir, the
-        # registry register/deregister, the four ``emit_run_*``
-        # terminal events, and the MlflowFinalizer upload in finalize.
-        self._coord = RunLifecycleCoordinator(
+        # :class:`_EventLifecycleCoordinator` (the events-side coord).
+        # The coordinator owns lazy construction once LaunchPreparator
+        # resolves the run dir, the registry register/deregister, the
+        # four ``emit_run_*`` terminal events, and the journal upload
+        # to MLflow in finalize.
+        self._coord = _EventLifecycleCoordinator(
             run_ctx=self.run_ctx,
             algorithm_supplier=self._derive_algorithm,
             dataset_id_supplier=self._derive_dataset_id,
@@ -205,6 +225,22 @@ class PipelineOrchestrator:
             mlflow_manager_supplier=lambda: self._mlflow_manager,
             pre_built_emitter=bootstrap.emitter,
         )
+
+        # Phase M7.2 — narrow MLflow lifecycle stack (separate from the
+        # legacy ``_mlflow_attempt`` wide-manager). The orchestrator
+        # owns the timing: open → preflight → close all flow through
+        # these collaborators; ``_mlflow_attempt`` retained because 6+
+        # stages still consume the wide :class:`IMLflowManager` surface.
+        self._mlflow_transport: MlflowTransport | None = bootstrap.mlflow_transport
+        self._mlflow_run_query: MlflowReadClient | None = bootstrap.mlflow_run_query
+        self._mlflow_journal_uploader: JournalUploader | None = bootstrap.mlflow_journal_uploader
+        self._mlflow_preflight: PreflightConnectivityCheck | None = bootstrap.mlflow_preflight
+        self._mlflow_opener: ParentRunOpener | None = bootstrap.mlflow_opener
+        self._mlflow_finalizer: MlflowFinalizer | None = bootstrap.mlflow_finalizer
+        self._mlflow_coord: _MLflowLifecycleCoord | None = bootstrap.mlflow_coord
+        # Track whether ``_mlflow_coord.__enter__`` has been called so
+        # ``_teardown_mlflow_attempt`` knows whether to call ``__exit__``.
+        self._mlflow_coord_entered: bool = False
 
         # Optional injection: tests / advanced callers can supply a pre-built
         # IMLflowManager (e.g. FakeMLflowManager). When provided, _setup_mlflow
@@ -532,64 +568,191 @@ class PipelineOrchestrator:
     def _setup_mlflow_for_attempt(
         self, *, state: PipelineState, attempt: PipelineAttemptState, start_stage_idx: int
     ) -> None:
-        # Bootstrap via the thin delegate so tests that patch ``_setup_mlflow``
-        # can inject a mock MLflowManager without reaching into MLflowAttemptManager.
+        """Open MLflow root + attempt runs via the new narrow stack.
+
+        Phase M7.2 rewires this method to drive the new
+        :class:`_MLflowLifecycleCoord` / :class:`ParentRunOpener` /
+        :class:`MlflowFinalizer` stack. The wide-manager
+        (:class:`IMLflowManager`) is still bootstrapped because 6+
+        stages consume it via ``PipelineContextKeys.MLFLOW_MANAGER``;
+        the orchestrator owns the open/close timing through the new
+        coord.
+
+        Heavy lifting lives in
+        :mod:`ryotenkai_control.pipeline.mlflow.lifecycle.orchestrator_glue`
+        to keep this file under the 800-line guardrail.
+        """
+        # 1. Bootstrap wide manager (stages still need it).
         manager = self._setup_mlflow()
-        self._mlflow_attempt.setup_for_attempt(
-            state=state,
-            attempt=attempt,
-            start_stage_idx=start_stage_idx,
-            context=self.context,
-            total_stages=len(self.stages),
-            run_directory=self.run_directory,
-            manager=manager,
+        if manager is None or not manager.is_active:
+            return
+
+        # 2. Persist runtime URI + CA bundle on state (resume path).
+        stamp_state_tracking_uri(
+            manager=manager, config=self.config, state=state
         )
+
+        # 3. Fall back to legacy wide-manager path when the narrow
+        # stack wasn't constructed (no URI / transport ctor failed).
+        coord = self._mlflow_coord
+        opener = self._mlflow_opener
+        if coord is None or opener is None:
+            self._mlflow_attempt.setup_for_attempt(
+                state=state,
+                attempt=attempt,
+                start_stage_idx=start_stage_idx,
+                context=self.context,
+                total_stages=len(self.stages),
+                run_directory=self.run_directory,
+                manager=manager,
+            )
+            return
+
+        # 4. Enter coord context (atexit + signal handlers).
+        coord.__enter__()
+        self._mlflow_coord_entered = True
+
+        # 5. Open root + nested attempt + replay legacy side effects.
+        try:
+            open_attempt_with_coord(
+                coord=coord,
+                opener=opener,
+                manager=manager,
+                config=self.config,
+                state=state,
+                attempt=attempt,
+                start_stage_idx=start_stage_idx,
+                total_stages=len(self.stages),
+                run_directory=self.run_directory,
+                context=self.context,
+            )
+        except Exception:
+            try:
+                coord.__exit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+            self._mlflow_coord_entered = False
+            raise
 
     def _ensure_mlflow_preflight(self, *, state: PipelineState) -> None:
         """Fail fast when mandatory MLflow setup/connectivity is not available.
 
-        Phase A2 Batch 7: ``ensure_preflight`` now raises typed exceptions
-        (:class:`ConfigInvalidError` for missing manager,
-        :class:`ProviderUnavailableError` for connectivity failures).
-        Wrap them in a :class:`LaunchPreparationError` so the run() catch
-        path's rejection-recording works uniformly.
+        Phase M7.2 routes through :class:`PreflightConnectivityCheck`
+        (narrow ``ping``-based) with a legacy ``ensure_preflight``
+        fallback when the narrow stack was not constructed.
         """
         try:
-            self._mlflow_attempt.ensure_preflight()
+            run_preflight_or_fallback(
+                preflight=self._mlflow_preflight,
+                legacy_mgr=self._mlflow_attempt,
+            )
         except RyotenkAIError as exc:
-            legacy_code = exc.context.get("legacy_code") if isinstance(exc.context, dict) else None
-            raise _wrap_as_launch_error(exc, state=state, legacy_code=legacy_code) from exc
-        self._mlflow_attempt.log_config_artifact()
-        # MLflowAttemptManager may have written run ids onto state/attempt
-        # out-of-band; persist those through the controller.
+            legacy_code = (
+                exc.context.get("legacy_code")
+                if isinstance(exc.context, dict)
+                else None
+            )
+            raise _wrap_as_launch_error(
+                exc, state=state, legacy_code=legacy_code
+            ) from exc
+        # Log the config artifact (no narrow equivalent yet) + persist
+        # run-id writes that happened out-of-band during setup.
+        self._log_config_artifact()
         self._attempt_controller.save()
 
+    def _log_config_artifact(self) -> None:
+        """Log the pipeline config file as an MLflow artifact if present.
+
+        Preserved verbatim from
+        :meth:`MLflowAttemptManager.log_config_artifact` — the narrow
+        :class:`IArtifactSink` does not yet cover this (the wide
+        manager owns ``log_artifact`` for the legacy YAML-on-disk
+        format).
+        """
+        manager = self._mlflow_manager
+        if (
+            manager is not None
+            and manager.is_active
+            and self.config_path is not None
+            and self.config_path.exists()
+        ):
+            try:
+                manager.log_artifact(str(self.config_path))
+            except Exception as e:  # noqa: BLE001 — best-effort
+                logger.warning(f"MLflow config artifact upload failed: {e}")
+
     def _teardown_mlflow_attempt(self, *, pipeline_success: bool) -> None:
+        """Close attempt + root runs via the new narrow coord.
+
+        Heavy lifting lives in
+        :func:`teardown_attempt_with_coord`; this method only resolves
+        the dependencies (manager, coord, state path, hooks) and
+        decides between the narrow vs legacy fallback paths.
+        """
+        manager = self._mlflow_manager
+        coord = self._mlflow_coord
         attempt_run_id = (
             self._attempt_controller.active_attempt.pipeline_attempt_mlflow_run_id
             if self._attempt_controller.has_active_attempt
             else None
         )
 
+        if manager is None and coord is None:
+            return
+
         def _before_end() -> None:
             self._aggregate_training_metrics()
-
-        def _sync_state_and_return_path() -> Path | None:
-            if self._state_store is None:
-                return None
-            self._attempt_controller.save()
-            return self._state_store.state_path
 
         def _after_end(run_id: str | None) -> None:
             self._generate_experiment_report(run_id=run_id)
 
-        self._mlflow_attempt.teardown_attempt(
+        # Legacy fallback when the narrow stack was not constructed.
+        if coord is None or not self._mlflow_coord_entered:
+            def _sync_state_and_return_path() -> Path | None:
+                if self._state_store is None:
+                    return None
+                self._attempt_controller.save()
+                return self._state_store.state_path
+
+            self._mlflow_attempt.teardown_attempt(
+                pipeline_success=pipeline_success,
+                attempt_run_id=attempt_run_id,
+                on_before_end=_before_end,
+                state_path_supplier=_sync_state_and_return_path,
+                on_after_end=_after_end,
+            )
+            return
+
+        # Narrow stack path — driven by :func:`teardown_attempt_with_coord`.
+        state_path: Path | None = (
+            self._state_store.state_path if self._state_store is not None else None
+        )
+
+        def _save_state() -> None:
+            if self._state_store is not None:
+                self._attempt_controller.save()
+
+        assert manager is not None  # narrow path always has wide manager
+        teardown_attempt_with_coord(
+            coord=coord,
+            manager=manager,
             pipeline_success=pipeline_success,
             attempt_run_id=attempt_run_id,
+            shutdown_signal_name=self._shutdown_signal_name,
+            state_path=state_path,
+            on_save_state=_save_state,
             on_before_end=_before_end,
-            state_path_supplier=_sync_state_and_return_path,
             on_after_end=_after_end,
+            emitter=getattr(self._coord, "_emitter", None),
         )
+
+        # Hook 6: exit the coord context — restores signal handlers
+        # and unregisters the coord's atexit hook.
+        try:
+            coord.__exit__(None, None, None)
+        except Exception as e:  # noqa: BLE001 — defensive
+            logger.warning(f"MLflow coord __exit__ failed: {e}")
+        self._mlflow_coord_entered = False
 
     def list_restart_points(self, run_dir: Path) -> list[dict[str, Any]]:
         """Delegate to :class:`RestartPointsInspector`."""

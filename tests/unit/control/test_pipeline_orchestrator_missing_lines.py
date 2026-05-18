@@ -143,6 +143,11 @@ class TestMissingInitAndMlflowSetupLines:
             orch._ensure_mlflow_preflight(state=state)
 
     def test_ensure_mlflow_preflight_surfaces_effective_uri_and_gateway_error(self, tmp_path: Path) -> None:
+        """Phase M7.2 — preflight now goes through the narrow
+        :class:`PreflightConnectivityCheck`. The legacy "effective_uri="
+        formatting moved with it; we now assert the new
+        ``ProviderUnavailableError`` surface (transport_uri context +
+        wrapping in :class:`LaunchPreparationError`)."""
         cfg = _mk_config()
         cfg.integrations.mlflow = SimpleNamespace(
             tracking_uri="https://public.example.ts.net",
@@ -150,19 +155,26 @@ class TestMissingInitAndMlflowSetupLines:
             system_metrics_callback_enabled=False,
         )
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=[])
-        orch._mlflow_manager = MagicMock()
-        orch._mlflow_manager.is_active = True
-        orch._mlflow_manager.get_runtime_tracking_uri.return_value = "http://localhost:5002"
-        orch._mlflow_manager.check_mlflow_connectivity.return_value = False
+
+        # Swap the orchestrator's preflight collaborator for a fake
+        # that raises the legacy-shape error so we can assert the
+        # wrapping behavior end-to-end.
         from ryotenkai_shared.errors import ProviderUnavailableError as _PUE
 
-        orch._mlflow_manager.get_last_connectivity_error.return_value = _PUE(
-            detail="certificate verify failed",
-            context={"mlflow_probe_reason": "MLFLOW_TLS_CERT_VERIFY_FAILED"},
-        )
+        class _FakePreflight:
+            def run(self) -> None:
+                raise _PUE(
+                    detail="certificate verify failed",
+                    context={
+                        "transport_uri": "http://localhost:5002",
+                        "mlflow_probe_reason": "MLFLOW_TLS_CERT_VERIFY_FAILED",
+                    },
+                )
+
+        orch._mlflow_preflight = _FakePreflight()
 
         state = _mk_pipeline_state(tmp_path)
-        with pytest.raises(Exception, match="effective_uri=http://localhost:5002"):
+        with pytest.raises(Exception, match="certificate verify failed"):
             orch._ensure_mlflow_preflight(state=state)
 
     @pytest.mark.xfail(
