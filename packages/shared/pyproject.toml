@@ -25,6 +25,7 @@ dependencies = [
     # Sentinel `test_no_fastapi_outside_shared_api.py` keeps the import
     # surface confined to `shared/src/ryotenkai_shared/api/`.
     "fastapi>=0.115.0,<1.0.0",
+    "tenacity>=8.0,<10.0",
 ]
 
 [project.optional-dependencies]

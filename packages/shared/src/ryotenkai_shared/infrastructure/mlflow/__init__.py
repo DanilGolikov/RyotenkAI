@@ -3,6 +3,10 @@
 from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
 from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway, MLflowGateway
 from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
+from ryotenkai_shared.infrastructure.mlflow.registry import (
+    MlflowModelRegistry,
+    MlflowModelVersion,
+)
 from ryotenkai_shared.infrastructure.mlflow.uri_resolver import (
     MLflowRuntimeRole,
     ResolvedMLflowUris,
@@ -14,7 +18,9 @@ __all__ = [
     "IMLflowManager",
     "MLflowEnvironment",
     "MLflowGateway",
+    "MLflowModelRegistry",
     "MLflowRuntimeRole",
+    "MlflowModelVersion",
     "ResolvedMLflowUris",
     "resolve_mlflow_uris",
 ]
