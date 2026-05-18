@@ -111,9 +111,9 @@ sentinel enforces this).
 > (documentation, ownership, history, decisions). **Always verify against
 > actual source files before making changes** — the index may be stale.
 
-Last indexed: 2026-05-17 (commit 12c501d). Confidence: 100%.
+Last indexed: 2026-05-18 (commit 3ae4ffa). Confidence: 100%.
 ### Architecture
-repo is a robust, multi-package monorepo designed to manage complex workflows, likely centered around machine learning orchestration, evaluation, and control systems. With over 380,000 lines of code, the project is structured to separate core logic, community-driven evaluations, and infrastructure control into distinct, modular Python packages, complemented by a TypeScript-based web interface. The repository is designed for scalability and maintainability, utilizing a shared package to enforce consistency across the ecosystem. It supports both CLI-driven operations and long-running server processes, making it suitable for both local development and production deployment.
+repo is a robust, Python-centric monorepo designed to manage complex workflows, likely involving machine learning orchestration, evaluation, and system control. With over 378,000 lines of code across 1,846 files, the project is structured into modular packages that handle distinct responsibilities ranging from community-driven evaluations to core system control and pod management. The repository emphasizes shared utilities and standardized event handling to maintain consistency across its distributed components. The project is primarily built with Python, which accounts for ~78% of the codebase, supported by a TypeScript/JavaScript frontend.
 ### Key Modules
 | Module | Purpose | Owner |
 |--------|---------|-------|
@@ -122,8 +122,8 @@ repo is a robust, multi-package monorepo designed to manage complex workflows, l
 | `scripts` | The scripts module serves as a centralized repository for automation and quality | — |
 | `web` | The web module serves as the frontend configuration and tooling root for the pro | — |
 | `community` | The community module serves as an extensible integration layer for third-party e | — |
-| `packages` | The packages module serves as the primary workspace for the Ryotenkai system's c | — |
-| `tests` | The tests module serves as the central validation and quality assurance layer fo | — |
+| `packages` | The packages module constitutes the core monorepo structure for the Ryotenkai ec | — |
+| `tests` | The tests module serves as the comprehensive testing suite for the Ryotenkai eco | — |
 ### Entry Points
 - `web/src/App.tsx`
 - `src/cli/app.py`
