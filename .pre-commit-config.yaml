@@ -113,6 +113,22 @@ repos:
         additional_dependencies: ["bandit[toml]"]
         files: ^packages/.*/src/
 
+  # ============================================
+  # MLflow integration rules (Phase M7)
+  # AST checker for call-site patterns importlinter cannot see:
+  # NO_AUTOLOG, NO_SET_TRACKING_URI_GLOBAL, NO_AD_HOC_MLFLOW_CLIENT,
+  # NO_START_RUN_IN_TRAINER. See scripts/lint/mlflow_rules.py.
+  # ============================================
+  - repo: local
+    hooks:
+      - id: mlflow-rules
+        name: MLflow integration rules (Phase M7)
+        entry: python scripts/lint/mlflow_rules.py packages
+        language: system
+        types: [python]
+        pass_filenames: false
+        files: ^packages/.*/src/
+
 # ============================================
 # Pre-commit configuration
 # ============================================
