@@ -563,17 +563,51 @@ class TrainingLauncher:
 
         mlflow_config = self.config.integrations.mlflow
         if mlflow_config:
+            # Phase M4 — Pattern A env propagation. The pod-trainer
+            # subprocess MUST adopt the control-plane's attempt run as
+            # its parent via the HF MLflowCallback's env-var protocol:
+            #
+            #   MLFLOW_RUN_ID        — parent attempt run id (adopted)
+            #   MLFLOW_NESTED_RUN    — literal "TRUE" (R-29)
+            #   MLFLOW_TRACKING_URI  — public funnel-exposed URI
+            #   MLFLOW_EXPERIMENT_NAME — required by HF callback
+            #   MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING — native GPU/CPU
+            #     sampling (R-10 / BP #4); replaces the deleted
+            #     SystemMetricsCallback path
+            #
+            # The legacy ``MLFLOW_PARENT_RUN_ID`` env var (tag-only
+            # linkage path) is REMOVED — the HF callback consumes
+            # ``MLFLOW_RUN_ID`` + ``MLFLOW_NESTED_RUN`` directly to
+            # produce structural nesting.
             uris = resolve_mlflow_uris(mlflow_config, runtime_role="training")
             if uris.effective_remote_tracking_uri:
                 env["MLFLOW_TRACKING_URI"] = uris.effective_remote_tracking_uri
             parent_run_id = context.get(PipelineContextKeys.MLFLOW_PARENT_RUN_ID)
             if isinstance(parent_run_id, str) and parent_run_id:
-                env["MLFLOW_PARENT_RUN_ID"] = parent_run_id
+                env["MLFLOW_RUN_ID"] = parent_run_id
+                env["MLFLOW_NESTED_RUN"] = "TRUE"
+            # ``experiment_name`` is required by both ``HFMlflowWiring.validate_env``
+            # and HF MLflowCallback. Stamped here from the control-side config.
+            experiment_name = getattr(mlflow_config, "experiment_name", None)
+            if isinstance(experiment_name, str) and experiment_name:
+                env["MLFLOW_EXPERIMENT_NAME"] = experiment_name
+            # Native MLflow system-metrics sampler -- replaces the deleted
+            # ``SystemMetricsCallback`` (Phase M4). The trainer's
+            # ``HFMlflowWiring.configure_training_args`` calls
+            # ``mlflow.set_system_metrics_node_id(local_rank)`` to scope
+            # per-rank metrics correctly.
+            env["MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING"] = "true"
             env["MLFLOW_HTTP_REQUEST_TIMEOUT"] = "15"
             env["MLFLOW_HTTP_REQUEST_MAX_RETRIES"] = "2"
             if mlflow_config.ca_bundle_path:
                 env["REQUESTS_CA_BUNDLE"] = mlflow_config.ca_bundle_path
                 env["SSL_CERT_FILE"] = mlflow_config.ca_bundle_path
+            # TODO(M6 - auth hardening): export
+            # ``MLFLOW_TRACKING_USERNAME``/``MLFLOW_TRACKING_PASSWORD``
+            # by decrypting ``mlflow_config.auth`` once the new
+            # ``MLflowConnectionConfig`` auth surface is in use. For
+            # M4 we only expose the URI + run-id pair; auth lands in
+            # Phase M6 per the plan.
 
         # Crash-observability env vars previously injected by the
         # generated ``start_training.sh``. The runner inherits

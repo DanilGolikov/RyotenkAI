@@ -1,23 +1,46 @@
 """
-Multi-Phase LLM Training Entry Point.
+Multi-Phase LLM Training Entry Point (Pattern A, post Phase M4).
 
 Main entry point for running LLM training with StrategyOrchestrator.
 Supports single-phase and multi-phase training pipelines.
 
-Components used:
-- MemoryManager: OOM protection and GPU management
-- StrategyOrchestrator: Multi-phase training coordination
-- StrategyFactory: Strategy creation (CPT, SFT, CoT, DPO, ORPO)
-- TrainerFactory: TRL trainer creation
-- DataBuffer: Checkpoint and state management
+Pattern A migration (Phase M4)
+------------------------------
+The trainer subprocess NO LONGER opens its own top-level MLflow run.
+Instead, the control plane opens the parent run and exports the
+following env vars before launching this process (see
+``ryotenkai_control.pipeline.stages.managers.deployment.training_launcher``):
 
-Features:
-- Single-phase training (backward compatible)
-- Multi-phase training: CPT → SFT → CoT → DPO
-- Resume from failed/interrupted phases
-- Automatic checkpoint cleanup
-- Dependency Injection via TrainingContainer
-- MLflow experiment tracking with event logging
+* ``MLFLOW_TRACKING_URI``
+* ``MLFLOW_RUN_ID``    -- the parent attempt run id to adopt
+* ``MLFLOW_NESTED_RUN`` -- literal ``"TRUE"`` (R-29)
+* ``MLFLOW_EXPERIMENT_NAME``
+* ``MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING`` -- ``"true"``
+
+The HF :class:`transformers.integrations.MLflowCallback` adopts those
+env vars and creates a structurally-nested child of the parent. The
+trainer:
+
+* Validates the env up-front via :meth:`HFMlflowWiring.validate_env`.
+* Configures :class:`TrainingArguments` via
+  :meth:`HFMlflowWiring.configure_training_args`.
+* (M5-followup) Registers the trained model via :class:`ModelPublisher`
+  after the chain completes.
+
+Strong assets preserved:
+
+* :class:`RunnerEventCallback` continues emitting typed envelopes onto
+  the runner bus (ADR-0009 SSOT journal).
+* ``_flush_helper.py`` is kept and still consulted by the cancellation /
+  completion callbacks.
+
+Components used:
+
+* MemoryManager: OOM protection and GPU management
+* StrategyOrchestrator: Multi-phase training coordination
+* StrategyFactory: Strategy creation (CPT, SFT, CoT, DPO, ORPO)
+* TrainerFactory: TRL trainer creation
+* DataBuffer: Checkpoint and state management
 
 Usage:
     # Run training
@@ -36,55 +59,190 @@ import argparse
 import contextlib
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ryotenkai_pod.trainer.constants import (
     EXIT_KEYBOARD_INTERRUPT,
-    TRUNCATE_ERROR_MSG,
-    TRUNCATE_SHA_DISPLAY,
 )
 from ryotenkai_pod.trainer.container import TrainingContainer
-from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
+from ryotenkai_pod.trainer.mlflow.hf_wiring import HFMlflowWiring
 from ryotenkai_shared.config.loader import load_pipeline_config
-from ryotenkai_shared.errors import RyotenkAIError
+from ryotenkai_shared.errors import ConfigInvalidError, RyotenkAIError
 from ryotenkai_shared.utils.environment import EnvironmentReporter
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.run_naming import generate_run_name
 
 if TYPE_CHECKING:
-    from ryotenkai_shared.config import PipelineConfig
+    pass
 
 
-def _extract_model_size(model_name: str) -> str:
-    """
-    Extract model size from model name.
+def _derive_model_family(model_name: str) -> str:
+    """Derive a short, registry-safe family slug from an HF model id.
+
+    The template ``ryotenkai/{experiment}/{model_family}`` needs a
+    second placeholder that is both human-readable and stable across
+    fine-tunes of the same base. We keep it simple: take everything
+    after the last ``/`` in the HF id, lowercase, and replace any
+    character outside ``[a-z0-9._-]`` with a dash. Empty / pathological
+    inputs degrade to ``"model"``.
 
     Examples:
-        "Qwen/Qwen2.5-0.5B-Instruct" -> "0.5B"
-        "meta-llama/Llama-3.2-7B" -> "7B"
-        "HuggingFaceTB/SmolLM2-1.7B-Instruct" -> "1.7B"
-        "unsloth/Qwen2.5-14B" -> "14B"
 
-    Args:
-        model_name: HuggingFace model name
-
-    Returns:
-        Model size string (e.g., "0.5B", "7B") or "unknown" if not found
+        ``"Qwen/Qwen2.5-0.5B-Instruct"`` -> ``"qwen2.5-0.5b-instruct"``
+        ``"meta-llama/Llama-3.2-1B"``    -> ``"llama-3.2-1b"``
     """
     import re
 
-    # Pattern: digits followed by optional decimal, then B (billion)
-    pattern = r"(\d+\.?\d*)[Bb]"
-    match = re.search(pattern, model_name)
+    if not model_name:
+        return "model"
+    tail = model_name.rsplit("/", 1)[-1].lower()
+    cleaned = re.sub(r"[^a-z0-9._-]+", "-", tail).strip("-")
+    return cleaned or "model"
 
-    if match:
-        size = match.group(1)
-        return f"{size}B"
 
-    logger.warning(f"Could not extract model size from model name: {model_name}")
-    return "unknown"
+def _publish_trained_model(
+    *,
+    config: object,
+    trainer_model: object,
+    tokenizer: object,
+    output_path: Path,
+) -> None:
+    """Log the trained transformer and register it under an alias.
+
+    Two-step Pattern A publish:
+
+    1. :func:`mlflow.transformers.log_model` uploads the model +
+       tokenizer to ``runs:/{run_id}/model`` with
+       ``save_pretrained=True`` (R-21), so the artifact contains the
+       Hugging Face directory layout consumers expect.
+    2. :meth:`ModelPublisher.publish` registers that URI and attaches
+       the success alias (default ``challenger``, configurable via
+       ``MLFLOW_ALIAS_ON_SUCCESS``).
+
+    All failures are caught and logged at WARNING — training succeeded
+    by the time we reach this helper; a registry hiccup must not flip
+    the pipeline status to FAILED. Operators can re-publish manually
+    via ``ryotenkai model promote`` once the issue is resolved.
+
+    :param config: Loaded :class:`PipelineConfig` (carrying
+        ``model.name`` and ``integrations.mlflow``).
+    :param trainer_model: Final trained model returned by the
+        orchestrator (passed to :func:`mlflow.transformers.log_model`).
+    :param tokenizer: Tokenizer paired with ``trainer_model``.
+    :param output_path: Local checkpoint directory (informational only;
+        the artifact comes from the live model handle).
+    """
+    try:
+        import mlflow  # noqa: PLC0415 — heavy, lazy
+    except Exception as exc:  # pragma: no cover -- defensive
+        logger.warning(
+            "[RUN_TRAINING:PUBLISH] mlflow not importable, skipping publish: %s",
+            exc,
+        )
+        return
+
+    # Pull the live nested run id the HF MLflowCallback opened. Fall
+    # back to ``MLFLOW_RUN_ID`` only when there is no active run --
+    # using the env value directly when the callback is still open
+    # would register against the parent attempt run instead of the
+    # nested child where the metrics live.
+    active = mlflow.active_run()
+    nested_run_id: str | None
+    if active is not None:
+        nested_run_id = active.info.run_id
+    else:
+        nested_run_id = os.environ.get("MLFLOW_RUN_ID") or None
+    if not nested_run_id:
+        logger.warning(
+            "[RUN_TRAINING:PUBLISH] no active mlflow run; skipping publish",
+        )
+        return
+
+    # Resolve registry name from the project template.
+    mlflow_cfg = getattr(getattr(config, "integrations", None), "mlflow", None)
+    if mlflow_cfg is None:
+        logger.warning(
+            "[RUN_TRAINING:PUBLISH] integrations.mlflow not configured; "
+            "skipping registry publish",
+        )
+        return
+
+    template = getattr(
+        mlflow_cfg, "model_registry_name_template",
+        "ryotenkai/{experiment}/{model_family}",
+    )
+    experiment = getattr(mlflow_cfg, "experiment_name", "default")
+    model_family = _derive_model_family(getattr(config.model, "name", ""))
+    registered_name = template.format(
+        experiment=experiment, model_family=model_family,
+    )
+
+    # Caller may override the alias via env (training_launcher passes
+    # ``MLFLOW_ALIAS_ON_SUCCESS`` derived from
+    # ``mlflow_cfg.alias_on_success`` in M6). Default to the project
+    # config value, with a final ``challenger`` fallback.
+    alias = (
+        os.environ.get("MLFLOW_ALIAS_ON_SUCCESS")
+        or getattr(mlflow_cfg, "alias_on_success", "challenger")
+        or "challenger"
+    )
+
+    artifact_path = "model"
+
+    # Step 1: log the transformer + tokenizer under the active run.
+    # ``mlflow.transformers.log_model`` honours the active fluent run
+    # (no need to pass run_id explicitly). ``save_pretrained=True``
+    # writes the HF on-disk format (R-21) so consumers can load with
+    # ``AutoModel.from_pretrained(<artifact_uri>)``.
+    try:
+        from mlflow import transformers as mlflow_transformers  # noqa: PLC0415
+
+        mlflow_transformers.log_model(
+            transformers_model={"model": trainer_model, "tokenizer": tokenizer},
+            artifact_path=artifact_path,
+            save_pretrained=True,
+        )
+        logger.info(
+            "[RUN_TRAINING:PUBLISH] artifact logged run_id=%s path=%s",
+            nested_run_id, artifact_path,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[RUN_TRAINING:PUBLISH] mlflow.transformers.log_model failed: %s "
+            "(output_path=%s)",
+            exc, output_path,
+        )
+        return
+
+    # Step 2: register + alias via :class:`ModelPublisher`. The
+    # registry is constructed against the same tracking URI MlflowTransport
+    # stamped at start-up — we read it back from ``mlflow.get_tracking_uri``
+    # rather than re-resolving the project config.
+    try:
+        from ryotenkai_pod.trainer.mlflow.model_publisher import ModelPublisher
+        from ryotenkai_shared.infrastructure.mlflow.registry import (
+            MlflowModelRegistry,
+        )
+
+        tracking_uri = mlflow.get_tracking_uri()
+        registry = MlflowModelRegistry(tracking_uri=tracking_uri)
+        publisher = ModelPublisher(registry=registry)
+        version = publisher.publish(
+            run_id=nested_run_id,
+            artifact_path=artifact_path,
+            registered_name=registered_name,
+            alias_on_success=alias,
+        )
+        logger.info(
+            "[RUN_TRAINING:PUBLISH] registered name=%s version=%s alias=%s",
+            registered_name, version.version, alias,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[RUN_TRAINING:PUBLISH] ModelPublisher.publish failed for "
+            "name=%s alias=%s: %s",
+            registered_name, alias, exc,
+        )
 
 
 def _emit_training_failed(
@@ -99,13 +257,6 @@ def _emit_training_failed(
     typed ``training.failed`` envelope onto the runner bus. The callback
     no-ops when ``RYOTENKAI_RUNNER_URL`` is unset (standalone trainer
     runs), so this helper is safe to call unconditionally.
-
-    Why a fresh instance rather than reaching into the HF Trainer's
-    callback list: the in-trainer callback may be inaccessible from
-    ``run_training.py`` (the orchestrator owns it), and constructing
-    another one is cheap — both go through the same loopback HTTP
-    channel to the in-pod runner which is the SSOT bus. The runner's
-    handler is the deduplication boundary, not this caller.
 
     All disk / network errors are swallowed: a broken event-push must
     not mask the original training failure.
@@ -133,31 +284,10 @@ def _emit_training_failed(
                 with contextlib.suppress(Exception):
                     cb._worker.join(timeout=1.0)
             cb._close_client()
-    except Exception as emit_exc:  # pragma: no cover — defensive
+    except Exception as emit_exc:  # pragma: no cover -- defensive
         logger.warning(
             f"[RUN_TRAINING:FAILED-EVENT] emit_training_failed suppressed: {emit_exc}",
         )
-
-
-def _setup_mlflow(config: PipelineConfig) -> MLflowManager | None:
-    """
-    Initialize MLflow tracking.
-
-    Args:
-        config: Pipeline configuration
-
-    Returns:
-        MLflowManager instance when tracking is available, otherwise None
-    """
-    try:
-        manager = MLflowManager(config, runtime_role="training")
-        if not manager.setup():
-            logger.warning("MLflow setup failed or tracking backend is unreachable; continuing without MLflow")
-            return None
-        return manager
-    except Exception as e:
-        logger.warning(f"MLflow setup failed: {e}; continuing without MLflow")
-        return None
 
 
 def run_training(
@@ -168,158 +298,103 @@ def run_training(
     container: TrainingContainer | None = None,
 ) -> Path:
     """
-    Main training function using StrategyOrchestrator.
+    Main training function using StrategyOrchestrator under Pattern A.
 
-    Executes LLM training with support for:
-    - Multi-phase training (CPT → SFT → CoT → DPO)
-    - Resume from failed/interrupted phases
-    - OOM protection via MemoryManager
-    - Checkpoint management via DataBuffer
-    - Dependency Injection via TrainingContainer
-    - MLflow event logging and summary generation
+    Pattern A: the trainer subprocess does NOT open its own MLflow run.
+    The control plane has already opened the parent (attempt) run; we
+    validate env, configure HF wiring, and let the HF MLflowCallback
+    create the nested child automatically.
 
     Args:
-        config_path: Path to pipeline configuration file
-        resume: If True, resume from last incomplete phase
-        run_id: Optional run ID for resume or reproducibility
-        container: Optional pre-configured TrainingContainer (for testing)
+        config_path: Path to pipeline configuration file.
+        resume: If True, resume from last incomplete phase.
+        run_id: Optional run ID for resume or reproducibility.
+        container: Optional pre-configured TrainingContainer (for testing).
 
     Returns:
-        Path to final model checkpoint
+        Path to final model checkpoint.
 
     Raises:
-        RuntimeError: If training fails
-
-    Example:
-        # Production usage
-        output_path = run_training("config/pipeline_config.yaml")
-
-        # Testing with mocks
-        container = TrainingContainer.for_testing(config, memory_manager=mock_mm)
-        output_path = run_training("config/test.yaml", container=container)
+        RuntimeError: If training fails.
+        ConfigInvalidError: If Pattern A env vars are missing.
     """
-    # Phase 6.3b: ``notifier`` / ``failure_notified`` removed along
-    # with the marker-file notifier abstraction. Trainer-side terminal
-    # signalling is delegated to RunnerEventCallback (loopback HTTP to
-    # the in-pod runner) plus MLflow events.
-    mlflow_mgr: MLflowManager | None = None
-    mlflow_run_context = None
     memory_manager = None  # For finally block memory snapshot
     training_success = False
     # Phase 3 (pre-Phase-3 fix): ensures the typed
     # ``TrainingFailedEvent`` is emitted at most once per ``run_training``
     # invocation even though the inner ``except RyotenkAIError`` rewraps
     # to ``RuntimeError`` and is then re-caught by the outer
-    # ``except Exception``. Phase 6.b retired the MLflow ``log_event_error``
-    # parallel path; the typed envelope on the bus is now the SSOT, and
-    # this flag remains for deduplication of that single source.
+    # ``except Exception``.
     training_failed_emitted = False
+
+    # Determine whether Pattern A env is fully wired. We do NOT
+    # fail-fast in standalone trainer runs (RYOTENKAI_RUNNER_URL absent
+    # or MLFLOW_RUN_ID absent) -- the trainer must still run from a
+    # bare CLI invocation for local debugging. The validate_env call
+    # below guards only the cloud / control-plane-launched path.
+    pattern_a_active = bool(os.environ.get("MLFLOW_RUN_ID", "").strip())
 
     try:
         logger.info("Starting LLM Training")
-        logger.debug(f"[RUN_TRAINING:START] config={config_path}, resume={resume}, run_id={run_id}")
+        logger.debug(
+            f"[RUN_TRAINING:START] config={config_path}, resume={resume}, "
+            f"run_id={run_id}, pattern_a_active={pattern_a_active}",
+        )
 
         # =====================================================================
         # 1. LOAD CONFIGURATION
         # =====================================================================
-        # DEBUG: Check config consistency on remote
-        try:
-            from src import config as config_module
-
-            logger.info(f"DEBUG: Config module: {config_module.__file__}")
-            if hasattr(config_module, "VALID_START_STRATEGIES"):
-                logger.info(f"DEBUG: Valid strategies: {config_module.VALID_START_STRATEGIES}")
-            else:
-                logger.info("DEBUG: VALID_START_STRATEGIES not found in config module")
-        except Exception as e:
-            logger.warning(f"DEBUG: Failed to inspect config module: {e}")
-
         config = load_pipeline_config(Path(config_path))
-        # PR-A milestone M3 — config loaded and validated. If postmortem
-        # shows M1+M2+M3 but no further trainer output, the death is in
-        # the heavy-init chain that follows (MLflow setup, dataset load,
-        # model load, CUDA init).
-        print("[TRAINER:M3] Config loaded, entering heavy-init chain", file=sys.stderr, flush=True)
+        print(
+            "[TRAINER:M3] Config loaded, entering heavy-init chain",
+            file=sys.stderr,
+            flush=True,
+        )
         strategies = config.training.get_strategy_chain()
 
         logger.info("Training config loaded")
         logger.info(f"   Model: {config.model.name}")
         logger.info(f"   Training type: {config.training.adapter.kind}")
-        logger.info(f"   4-bit quantization: {config.training.get_effective_load_in_4bit()}")
-        logger.info(f"   Strategies: {' -> '.join(s.strategy_type.upper() for s in strategies)}")
+        logger.info(
+            f"   4-bit quantization: {config.training.get_effective_load_in_4bit()}",
+        )
+        logger.info(
+            "   Strategies: "
+            + " -> ".join(s.strategy_type.upper() for s in strategies),
+        )
         logger.info(f"   Multi-phase: {config.training.is_multi_phase()}")
 
         # =====================================================================
-        # 2. SETUP EXPERIMENT TRACKING (MLflow) - EARLY
+        # 2. PATTERN A: VALIDATE MLFLOW ENV (control plane sets these)
         # =====================================================================
-        mlflow_mgr = _setup_mlflow(config)
-
-        if mlflow_mgr and mlflow_mgr.is_active:
-            # Enable autologging for Transformers
-            mlflow_mgr.enable_autolog(log_models=False)
-
-            # Ensure system metrics are ENABLED for the Provider (GPU)
-            # This is critical for monitoring GPU usage during training
-            # Note: accessing protected member for config check as specific property not exposed in interface
-            # Phase 14 follow-up — system_metrics moved into a nested
-            # block; older configs / mocks may not carry it, so we
-            # navigate via getattr.
-            mlflow_config = getattr(mlflow_mgr, "_mlflow_config", None)
-            sm_block = getattr(mlflow_config, "system_metrics", None) if mlflow_config else None
-            sm_callback_enabled = bool(getattr(sm_block, "callback_enabled", False))
-            if mlflow_config and not sm_callback_enabled:
-                logger.warning("⚠️ System metrics callback is disabled in config! GPU monitoring will be missing.")
-                logger.info("i To fix: set integrations.mlflow.system_metrics.callback_enabled = true")
-            else:
-                logger.info("✅ GPU System Metrics monitoring enabled for this Provider process")
-
-        # =====================================================================
-        # 3. START MLFLOW RUN (to log all events from start)
-        # =====================================================================
-        strategy_chain = "_".join(s.strategy_type for s in strategies)
-        run_name = f"{config.model.name.split('/')[-1]}_{strategy_chain}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-
-        if mlflow_mgr and mlflow_mgr.is_active:
-            mlflow_run_context = mlflow_mgr.start_run(run_name=run_name)
-            mlflow_run_context.__enter__()
-
-            # Set parent run ID tag for nested run structure (from Mac pipeline)
-            parent_run_id = os.environ.get("MLFLOW_PARENT_RUN_ID")
-            if parent_run_id:
-                mlflow_mgr.set_tags({"mlflow.parentRunId": parent_run_id})
-                logger.info(f"✅ Linked to parent run: {parent_run_id}")
-
-            # Log Docker image SHA for reproducibility (Layer Caching Strategy)
-            docker_image_sha = os.environ.get("DOCKER_IMAGE_SHA")
-            if docker_image_sha:
-                mlflow_mgr.set_tags(
-                    {"docker.image.sha": docker_image_sha, "docker.strategy": "layer_caching_immutable"}
+        # When the trainer is launched by the control plane, every
+        # ``MLFLOW_*`` env var must be present. Standalone trainer
+        # invocations (local dev) skip this check.
+        if pattern_a_active:
+            try:
+                HFMlflowWiring.validate_env()
+                logger.info(
+                    "Pattern A active: parent run id=%s, experiment=%s",
+                    os.environ["MLFLOW_RUN_ID"],
+                    os.environ["MLFLOW_EXPERIMENT_NAME"],
                 )
-                logger.info(f"📌 Docker image SHA: {docker_image_sha[:TRUNCATE_SHA_DISPLAY]}...")
-
-            # Phase 6.b: parallel MLflowEventLog log_event_* calls
-            # removed. Pipeline-start / config-loaded events flow
-            # through the typed journal (control-side
-            # ``events.jsonl``) emitted by the control plane's
-            # ``RunStartedEvent`` and friends.
-
-            # Log training config
-            mlflow_mgr.log_training_config(config)
-            mlflow_mgr.log_artifact(config_path)
+            except ConfigInvalidError:
+                logger.exception(
+                    "Pattern A env validation failed; trainer cannot "
+                    "proceed because the control plane expected a "
+                    "nested MLflow child.",
+                )
+                raise
 
         # =====================================================================
-        # 4. LOG ENVIRONMENT (for reproducibility)
+        # 3. LOG ENVIRONMENT (for reproducibility)
         # =====================================================================
         env_reporter = EnvironmentReporter.collect()
         env_reporter.log_summary()
         logger.debug("[RUN_TRAINING:ENV] Environment snapshot collected")
 
-        # Log environment to MLflow
-        if mlflow_mgr and mlflow_mgr.is_active:
-            mlflow_mgr.log_environment(env_reporter.snapshot.to_dict())
-
         # =====================================================================
-        # 5. CREATE OR USE CONTAINER (Dependency Injection)
+        # 4. CREATE OR USE CONTAINER (Dependency Injection)
         # =====================================================================
         if container is None:
             container = TrainingContainer(config)
@@ -327,19 +402,15 @@ def run_training(
         else:
             logger.debug("[RUN_TRAINING:CONTAINER] Using injected TrainingContainer")
 
-        # Phase 6.3b: completion-notifier abstraction removed. Trainer
-        # progress / terminal events now flow through the in-pod
-        # runner's RunnerEventCallback (pod) → bus → WebSocket (Mac).
-        # The trainer just logs locally; no marker files, no separate
-        # notifier object.
-
         # =====================================================================
-        # 6. GET MEMORY MANAGER WITH CALLBACKS + LOG GPU DETECTION
+        # 5. GET MEMORY MANAGER + LOG GPU DETECTION (no MLflow callbacks)
         # =====================================================================
-        # Create MemoryManager with MLflow callbacks for event logging
-        memory_manager = container.create_memory_manager_with_callbacks(mlflow_mgr)
+        # Pattern A: no MLflow callbacks attached -- HF MLflowCallback
+        # writes the metrics to the nested child it owns. MemoryManager
+        # is constructed with ``mlflow_manager=None`` so any internal
+        # mlflow-wiring code paths short-circuit.
+        memory_manager = container.create_memory_manager_with_callbacks(None)
 
-        # Log GPU Info
         if memory_manager.gpu_info:
             gpu = memory_manager.gpu_info
             logger.info(f"GPU: {gpu.name}")
@@ -348,55 +419,8 @@ def run_training(
         else:
             logger.info("GPU: Unknown/CPU")
 
-        # Log recommendations to MLflow with config comparison
-        if mlflow_mgr and mlflow_mgr.is_active and memory_manager.gpu_info:
-            gpu = memory_manager.gpu_info
-            # Explicitly log GPU detection event with structured data for Report Generator
-            # Note: memory_manager.gpu_info is typed as Any in protocol due to circular imports,
-            # but at runtime it is a GPUInfo object.
-            mlflow_mgr.log_gpu_detection(
-                name=gpu.name,
-                vram_gb=gpu.total_memory_gb,
-                tier=gpu.tier.value,
-            )
-
-            # Extract actual model size from model name (e.g., "Qwen2.5-0.5B-Instruct" -> "0.5B")
-            model_size = _extract_model_size(config.model.name)
-
-            # Log actual model size as param for report filtering
-            mlflow_mgr.log_params({"mm.actual_model_size": model_size})
-
-            # Log MemoryManager configuration parameters for report display
-            if memory_manager.preset:
-                preset = memory_manager.preset
-                mlflow_mgr.log_params(
-                    {
-                        "mm.memory_margin_mb": preset.memory_margin_mb,
-                        "mm.critical_threshold": preset.critical_threshold,
-                        "mm.warning_threshold": preset.warning_threshold,
-                        "mm.max_retries": preset.max_retries,
-                    }
-                )
-                logger.debug(
-                    f"[MM:CONFIG] memory_margin={preset.memory_margin_mb}MB, "
-                    f"thresholds={preset.critical_threshold}/{preset.warning_threshold}%, "
-                    f"max_retries={preset.max_retries}"
-                )
-
-        # Log initial memory state (before model loading)
-        if mlflow_mgr and mlflow_mgr.is_active:
-            mem_stats = memory_manager.get_memory_stats()
-            if mem_stats:
-                mlflow_mgr.log_memory_snapshot(
-                    phase="pre_model_load",
-                    used_mb=mem_stats.used_mb,
-                    free_mb=mem_stats.free_mb,
-                    total_mb=mem_stats.total_mb,
-                    utilization_percent=mem_stats.utilization_percent,
-                )
-
         # =====================================================================
-        # 7. LOAD MODEL AND TOKENIZER
+        # 6. LOAD MODEL AND TOKENIZER
         # =====================================================================
         import time
 
@@ -406,80 +430,50 @@ def run_training(
 
         # Calculate model parameters
         total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        trainable_percent = (trainable_params / total_params * 100) if total_params > 0 else 0
+        trainable_params = sum(
+            p.numel() for p in model.parameters() if p.requires_grad
+        )
+        trainable_percent = (
+            (trainable_params / total_params * 100) if total_params > 0 else 0
+        )
 
         logger.info(f"Model loaded in {model_load_duration:.1f}s")
         logger.info(f"   Total parameters: {total_params:,}")
-        logger.info(f"   Trainable parameters: {trainable_params:,} ({trainable_percent:.2f}%)")
-
-        # Log memory state after model loading
-        if mlflow_mgr and mlflow_mgr.is_active:
-            mem_stats = memory_manager.get_memory_stats()
-            if mem_stats:
-                mlflow_mgr.log_memory_snapshot(
-                    phase="post_model_load",
-                    used_mb=mem_stats.used_mb,
-                    free_mb=mem_stats.free_mb,
-                    total_mb=mem_stats.total_mb,
-                    utilization_percent=mem_stats.utilization_percent,
-                )
-
-            # Log model info as params and event
-            mlflow_mgr.log_params(
-                {
-                    "model.loading_time_seconds": round(model_load_duration, 2),
-                    "model.total_parameters": total_params,
-                    "model.trainable_parameters": trainable_params,
-                    "model.trainable_percent": round(trainable_percent, 2),
-                }
-            )
-
-        # Phase 6.b: model-loaded log_event_info call removed.
-        # Model-load telemetry is logged via ``mlflow_mgr.log_params``
-        # above; the typed journal captures coarse-grained pipeline
-        # progression via the control-side stage emitter.
+        logger.info(
+            f"   Trainable parameters: {trainable_params:,} "
+            f"({trainable_percent:.2f}%)",
+        )
 
         # =====================================================================
-        # 8. CREATE ORCHESTRATOR (with MLflow manager)
+        # 7. CREATE ORCHESTRATOR (no MLflow manager under Pattern A)
         # =====================================================================
         logger.info("Creating StrategyOrchestrator...")
+        # Phase M5: ``HFMlflowWiring.configure_training_args`` is invoked
+        # inside :class:`TrainerFactory.create` per-phase, right after
+        # the ``TrainingArguments`` object is built. This guarantees
+        # ``report_to=["mlflow"]`` and the per-rank
+        # ``mlflow.set_system_metrics_node_id`` are applied to every
+        # strategy in the chain, not only the first. The hook short-
+        # circuits when ``MLFLOW_RUN_ID`` is unset (standalone trainer
+        # runs / local dev), so the same trainer binary covers both
+        # control-plane-launched and bare CLI paths.
         orchestrator = container.create_orchestrator(
             model,
             tokenizer,
-            mlflow_manager=mlflow_mgr,
+            mlflow_manager=None,
         )
         logger.info("StrategyOrchestrator ready")
 
-        # Log additional params
-        if mlflow_mgr and mlflow_mgr.is_active:
-            mlflow_mgr.set_tags(
-                {
-                    "run_id": run_id or "none",
-                    "resume": str(resume),
-                }
-            )
-
         # =====================================================================
-        # 9. RUN TRAINING CHAIN
+        # 8. RUN TRAINING CHAIN
         # =====================================================================
-        logger.info(f"Running training chain: {' -> '.join(s.strategy_type.upper() for s in strategies)}")
+        logger.info(
+            "Running training chain: "
+            + " -> ".join(s.strategy_type.upper() for s in strategies),
+        )
 
-        if mlflow_mgr and mlflow_mgr.is_active:
-            mlflow_mgr.log_pipeline_initialized(
-                run_id=run_id or generate_run_name()[0],
-                total_phases=len(strategies),
-                strategy_chain=[s.strategy_type for s in strategies],
-            )
-
-        # Phase A2 Batch 14: ``orchestrator.run_chain`` now raises typed
-        # :class:`RyotenkAIError` subclasses on failure (instead of
-        # returning ``Result[..., TrainingError]``). We catch the typed
-        # exception, surface the same MLflow + log signals as before,
-        # and rewrap as ``RuntimeError`` so the test surface (and
-        # outer-process exit semantics) stays identical.
         try:
-            _ = orchestrator.run_chain(
+            trained_model = orchestrator.run_chain(
                 strategies=strategies,
                 resume=resume,
                 run_id=run_id,
@@ -488,143 +482,105 @@ def run_training(
             error_msg = exc.detail or str(exc)
             logger.error(f"Training failed: {error_msg}")
 
-            # Phase 3 (pre-Phase-3 fix): emit a typed
-            # ``TrainingFailedEvent`` BEFORE the MLflow event-error
-            # call so control-side and SSE consumers see the typed
-            # envelope on the bus. The MLflow call below is the
-            # MLflow-artefact-archival parallel path (used by report
-            # generation); both must run.
+            # Typed envelope on the bus is the SSOT.
             _emit_training_failed(exc=exc)
             training_failed_emitted = True
 
-            if mlflow_mgr and mlflow_mgr.is_active:
-                mlflow_mgr.set_tag("status", "failed")
-                mlflow_mgr.log_params({"error": str(error_msg)[:TRUNCATE_ERROR_MSG]})
-                # Phase 6.b: parallel log_event_error call removed —
-                # ``_emit_training_failed`` above emitted the typed
-                # ``TrainingFailedEvent`` which is the SSOT.
-
-            # Phase 6.3b: notifier.notify_failed call removed. The
-            # MLflow event above + the RunnerEventCallback's loopback
-            # event push (Phase 3) carry the same information; no
-            # marker file is written.
             raise RuntimeError(f"Training failed: {error_msg}") from exc
 
         training_success = True
         logger.info("Training chain completed successfully!")
 
         # =====================================================================
-        # 11. GET OUTPUT PATH + REGISTER MODEL
+        # 9. GET OUTPUT PATH
         # =====================================================================
         if orchestrator.buffer:
             last_phase_idx = len(strategies) - 1
-            output_path = Path(orchestrator.buffer.get_phase_output_dir(last_phase_idx)) / "checkpoint-final"
+            output_path = (
+                Path(orchestrator.buffer.get_phase_output_dir(last_phase_idx))
+                / "checkpoint-final"
+            )
         else:
-            # Fallback: derive expected last phase output dir (same naming as DataBuffer).
+            # Fallback: derive expected last phase output dir.
             last_phase_idx = len(strategies) - 1
             last_phase = strategies[last_phase_idx]
-            output_path = Path("output") / f"phase_{last_phase_idx}_{last_phase.strategy_type}" / "checkpoint-final"
-
-        if mlflow_mgr and mlflow_mgr.is_active:
-            mlflow_mgr.set_tag("status", "completed")
-            mlflow_mgr.log_params({"output_path": str(output_path)})
-            # Phase 6.b: parallel log_event_complete call removed —
-            # the typed ``TrainingCompletedEvent`` emitted by the
-            # RunnerEventCallback on HF ``on_train_end`` is the SSOT.
-
-            model_name = config.model.name.split("/")[-1].replace(".", "-").lower()
-            mlflow_mgr.register_model(
-                model_name=f"helix-{model_name}",
-                alias="latest",
-                tags={"strategy_chain": strategy_chain},
+            output_path = (
+                Path("output")
+                / f"phase_{last_phase_idx}_{last_phase.strategy_type}"
+                / "checkpoint-final"
             )
 
         # =====================================================================
-        # 12. NOTIFY SUCCESS
+        # 10. PUBLISH MODEL VIA ALIASES (Pattern A, Phase M5)
+        # =====================================================================
+        # Two-step sequence:
+        #
+        #   a) ``mlflow.transformers.log_model(..., save_pretrained=True)``
+        #      uploads the trained transformer + tokenizer under
+        #      ``runs:/{run_id}/model`` (R-21).
+        #   b) :meth:`ModelPublisher.publish` calls ``register_model``
+        #      against that URI and sets ``alias_on_success`` (default
+        #      ``challenger``). Promotion to ``champion`` is a manual
+        #      operator action via ``ryotenkai model promote``.
+        #
+        # The HF MLflowCallback opens a nested child of the parent
+        # attempt run; ``mlflow.active_run().info.run_id`` is that
+        # child. We use it (rather than ``MLFLOW_RUN_ID``) so the
+        # registered model URI points at the artifact the callback
+        # actually wrote.
+        #
+        # All failures here are non-fatal -- training succeeded; the
+        # operator can re-publish manually. Logs are loud so failures
+        # are caught in CI smoke runs.
+        if pattern_a_active and training_success:
+            _publish_trained_model(
+                config=config,
+                trainer_model=trained_model if trained_model is not None else model,
+                tokenizer=tokenizer,
+                output_path=output_path,
+            )
+
+        # =====================================================================
+        # 11. NOTIFY SUCCESS
         # =====================================================================
         logger.info("Training completed successfully!")
         logger.info(f"Output: {output_path}")
-        logger.info(f"Strategies: {' -> '.join(s.strategy_type for s in strategies)}")
+        logger.info(
+            "Strategies: " + " -> ".join(s.strategy_type for s in strategies),
+        )
         logger.info(f"Total phases: {len(strategies)}")
 
-        # Phase 6.3b: notifier.notify_complete call removed. Logger
-        # lines above + MLflow event + RunnerEventCallback already
-        # carry the same metadata; the runner's FSM transitions to
-        # COMPLETED on natural exit and the Mac client sees it over
-        # WebSocket.
         return output_path
 
     except Exception as e:
         logger.exception(f"Unexpected error during training: {e}")
 
-        # Phase 3 / Phase 6.b: emit typed ``TrainingFailedEvent``
-        # for unexpected exceptions (anything that wasn't already
-        # caught as ``RyotenkAIError`` above — typically pre-loop
-        # failures like config / model load, or a non-typed crash
-        # inside the orchestrator). The typed envelope on the bus
-        # is the SSOT (Phase 6.b removed the parallel MLflow
-        # ``log_event_error`` call).
-        #
-        # Skip if the inner ``RyotenkAIError`` branch already emitted —
-        # that branch rewraps to ``RuntimeError`` which is then caught
-        # here, so without the flag we would emit twice.
+        # Phase 3 / Phase 6.b: emit typed ``TrainingFailedEvent`` for
+        # unexpected exceptions. Skip if the inner ``RyotenkAIError``
+        # branch already emitted -- that branch rewraps to
+        # ``RuntimeError`` which is then caught here, so without the
+        # flag we would emit twice.
         if not training_failed_emitted:
             _emit_training_failed(exc=e)
             training_failed_emitted = True
 
-        # Phase 6.b: parallel log_event_error call removed — the
-        # ``_emit_training_failed`` helper above emits the typed
-        # ``TrainingFailedEvent`` which is the SSOT.
-
-        # Phase 6.3b: notifier.notify_failed for unexpected errors
-        # removed. The MLflow event above + the RunnerEventCallback
-        # error push handle the same notification path.
         raise
 
     finally:
         # =====================================================================
-        # GENERATE TRAINING SUMMARY (always runs)
+        # No MLflow teardown -- the HF MLflowCallback closes its own
+        # nested child on ``Trainer`` exit, and the control plane
+        # finalizes the parent run via ``MlflowFinalizer``.
         # =====================================================================
-        # Log final memory state
-        if mlflow_mgr and mlflow_mgr.is_active and memory_manager:
-            mem_stats = memory_manager.get_memory_stats()
-            if mem_stats:
-                mlflow_mgr.log_memory_snapshot(
-                    phase="training_complete",
-                    used_mb=mem_stats.used_mb,
-                    free_mb=mem_stats.free_mb,
-                    total_mb=mem_stats.total_mb,
-                    utilization_percent=mem_stats.utilization_percent,
-                )
-
-        if mlflow_mgr and mlflow_mgr.is_active:
-            try:
-                # Log training_events.json to PARENT run (pipeline_* on Mac)
-                # All artifacts should be centralized in parent for easy access
-                mac_parent_run_id = os.environ.get("MLFLOW_PARENT_RUN_ID")
-                mlflow_mgr.log_summary_artifact(
-                    events_artifact_name="training_events.json",
-                    parent_run_id=mac_parent_run_id,  # Log to parent (Mac pipeline run)
-                )
-                if mac_parent_run_id:
-                    logger.info(f"Training summary logged to parent run: {mac_parent_run_id[:8]}...")
-                else:
-                    logger.info("Training summary logged to MLflow (current run)")
-
-            except Exception as summary_error:
-                logger.warning(f"Failed to generate training summary: {summary_error}")
-
-            # End run with explicit status
-            run_status = "FINISHED" if training_success else "FAILED"
-            mlflow_mgr.end_run(status=run_status)
-
-        # Cleanup MLflow context
-        if mlflow_run_context:
+        if memory_manager is not None and hasattr(memory_manager, "cleanup"):
             with contextlib.suppress(Exception):
-                mlflow_run_context.__exit__(None, None, None)
-
-        if mlflow_mgr:
-            mlflow_mgr.cleanup()
+                memory_manager.cleanup()
+        # Signal end of training_success state for logs.
+        logger.info(
+            "[RUN_TRAINING:DONE] training_success=%s pattern_a_active=%s",
+            training_success,
+            pattern_a_active,
+        )
 
 
 # =============================================================================
@@ -656,23 +612,10 @@ def _install_crash_observability() -> None:
     What we install
     ---------------
     - ``faulthandler.enable(all_threads=True)``: CPython's built-in
-      native-crash handler. On fatal signals it writes Python + C stack frames
-      of *all* threads directly via ``write(2)`` — it survives a Python
-      runtime crash because it doesn't go through the logging stack.
+      native-crash handler.
+    - ``atexit`` flush of all logging handlers.
 
-      No custom file: faulthandler's default destination is ``sys.stderr``.
-      The runner's :class:`Supervisor` captures every byte of trainer
-      stderr into ``trainer.stdio.log`` (see :mod:`src.runner.supervisor`),
-      so native crash traces land on disk through the same path as
-      regular Python tracebacks. One ground-truth artefact, one writer.
-
-    - ``atexit`` flush of all logging handlers: on *any* normal exit path
-      (including ``sys.exit``, ``return``, or a Python exception that reaches
-      ``main()``), ensure pending log records are flushed to stderr before
-      Python tears down. Prevents "last 5 log lines lost" on crash.
-
-    Best-effort: this function never raises. Observability must never
-    prevent training from starting.
+    Best-effort: this function never raises.
     """
     import atexit
     import faulthandler
@@ -683,7 +626,7 @@ def _install_crash_observability() -> None:
         logger.debug(
             "[RUN_TRAINING:OBSERVABILITY] faulthandler enabled (writes to stderr)",
         )
-    except Exception as exc:  # pragma: no cover — defensive
+    except Exception as exc:  # pragma: no cover -- defensive
         logger.warning(
             f"[RUN_TRAINING:OBSERVABILITY] faulthandler.enable failed: {exc}",
         )
@@ -698,55 +641,27 @@ def _install_crash_observability() -> None:
     try:
         atexit.register(_flush_logging_handlers)
     except Exception as exc:  # pragma: no cover
-        logger.warning(f"[RUN_TRAINING:OBSERVABILITY] atexit.register failed: {exc}")
+        logger.warning(
+            f"[RUN_TRAINING:OBSERVABILITY] atexit.register failed: {exc}",
+        )
 
 
 def main() -> int:
     """CLI entry point."""
-    # PR-A milestone M1 — Python interpreter and stdlib are alive. If the
-    # postmortem on Mac shows nothing past M1, blame argparse / crash
-    # observability install / something between argv arrival and the next
-    # milestone. ``flush=True`` because we may die before line buffering
-    # gets a chance to drain.
-    print("[TRAINER:M1] Python interpreter started, argv parsed", file=sys.stderr, flush=True)
+    print(
+        "[TRAINER:M1] Python interpreter started, argv parsed",
+        file=sys.stderr,
+        flush=True,
+    )
 
-    # Phase D — Wall-clock anchor for ``TrainerExitPayload.wall_seconds``.
-    # ``time.monotonic()`` is suspend-safe and never decreases; we read
-    # it the very first thing so any failure between argparse and the
-    # try/except wrapping ``run_training`` still produces a sensible
-    # duration if the exit_reporter runs.
     import time
     _trainer_started_at = time.monotonic()
 
-    # Crash observability MUST be installed before argparse / any heavy import
-    # that may itself segfault (bitsandbytes, flash-attn). See
-    # _install_crash_observability() docstring.
     _install_crash_observability()
 
     parser = argparse.ArgumentParser(
         description="Multi-Phase LLM Training with StrategyOrchestrator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    # Single-phase training
-    python -m src.training.run_training --config config/pipeline_config.yaml
-
-    # With DEBUG logs
-    LOG_LEVEL=DEBUG python -m src.training.run_training --config config/pipeline_config.yaml
-
-    # Resume interrupted training
-    python -m src.training.run_training --config config/pipeline_config.yaml --resume --run-id run_xxx
-
-Debug log tags:
-    [RUN_TRAINING:] - This script
-    [SO:]           - StrategyOrchestrator
-    [SF:]           - StrategyFactory
-    [TF:]           - TrainerFactory
-    [DB:]           - DataBuffer
-    [MM:]           - MemoryManager
-    [CFG:]          - Config
-    [CONTAINER:]    - TrainingContainer
-        """,
     )
 
     parser.add_argument(
@@ -774,9 +689,6 @@ Debug log tags:
     args = parser.parse_args()
 
     # Propagate HF_HUB_* keys from secrets.env to os.environ before training starts.
-    # pydantic-settings does not write env-file values to os.environ automatically, so
-    # variables like HF_HUB_DISABLE_XET=1 would be silently ignored without this step.
-    # setdefault() preserves any values already set in the environment.
     try:
         from ryotenkai_shared.config.secrets import load_secrets as _load_secrets
         _secrets = _load_secrets()
@@ -786,20 +698,8 @@ Debug log tags:
     except Exception:
         pass  # never block training due to secrets propagation
 
-    # PR-A milestone M2 — argparse + secrets propagation done; about to
-    # touch the config file and the import chain it pulls in
-    # (load_pipeline_config → src.config validators → src.providers,
-    # historically the failure mode in run_20260429_171726_49j32 and the
-    # 15-crash incident on 2026-05-02). If the postmortem shows M1 but
-    # not M3, the death is in load_pipeline_config or its transitive
-    # imports.
     print(f"[TRAINER:M2] Loading config from {args.config}", file=sys.stderr, flush=True)
 
-    # Phase D — workdir resolution for ``trainer-exit.json``. The
-    # supervisor sets the subprocess cwd to ``<workspace>/runs/<run_id>``
-    # via ``submit_and_spawn(..., workdir=PATH)``, so a bare
-    # ``Path.cwd()`` agrees with the supervisor's reader. Captured up
-    # front so the except branch doesn't need to import :mod:`pathlib`.
     from pathlib import Path as _Path
     _exit_workdir = _Path.cwd()
 
@@ -816,18 +716,13 @@ Debug log tags:
         return EXIT_KEYBOARD_INTERRUPT
     except Exception as e:
         logger.error(f"Training failed: {e}")
-        # Phase D — write structured exit payload so the supervisor's
-        # ``trainer_exited`` event carries a typed ``code`` /
-        # ``message`` / ``traceback_summary`` instead of a bare
-        # ``exit_code``. Best-effort: any disk error is suppressed so
-        # a broken workdir cannot mask the original training failure.
         try:
             from ryotenkai_pod.trainer.exit_reporter import write_failure_payload
             write_failure_payload(
                 _exit_workdir, e,
                 started_at=_trainer_started_at, exit_code=1,
             )
-        except Exception:  # pragma: no cover — defensive
+        except Exception:  # pragma: no cover -- defensive
             pass
         return 1
 

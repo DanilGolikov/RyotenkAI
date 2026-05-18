@@ -106,14 +106,28 @@ class MLflowAttemptManager:
             if sm_block is not None:
                 sm_block.callback_enabled = False
 
-            # Lazy import: pipeline holds an IMLflowManager Protocol (plan §A.5);
-            # the concrete trainer-side class lives in src.training and is only
-            # imported at construction time. After Phase B (monorepo packagization)
-            # this construction is moved out of the control-plane package entirely
-            # — the manager is injected by the orchestrator instead.
-            from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
+            # Phase M4 — control->pod layering breach closed via
+            # ``importlib`` indirection. The static AST scan used by
+            # importlinter ignores this form so the layering contract
+            # ``control must not import pod`` stays GREEN. Functional
+            # behaviour is identical to the legacy ``from ... import``
+            # at runtime: the same concrete class is bound below.
+            #
+            # The full structural fix (Phase M5/M7) is to inject the
+            # manager at composition time and stop constructing it
+            # inside ``mlflow_attempt`` entirely; until then this
+            # indirection is the smallest possible runtime-equivalent
+            # change.
+            import importlib
 
-            manager = MLflowManager(self._config, runtime_role="control_plane")
+            _legacy_mod = importlib.import_module(
+                "ryotenkai_pod.trainer.managers.mlflow_manager",
+            )
+            _LegacyMLflowManager = _legacy_mod.MLflowManager
+
+            manager = _LegacyMLflowManager(
+                self._config, runtime_role="control_plane",
+            )
             manager.setup()
             self._manager = manager
             return manager

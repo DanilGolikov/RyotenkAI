@@ -32,6 +32,9 @@ from ryotenkai_control.cli.commands import (
     job as _job_mod,
 )
 from ryotenkai_control.cli.commands import (
+    model as _model_mod,
+)
+from ryotenkai_control.cli.commands import (
     plugin as _plugin_mod,
 )
 from ryotenkai_control.cli.commands import (
@@ -64,6 +67,7 @@ _REGISTRY: list[tuple[typer.Typer, str]] = [
     (_events_mod.events_app, "events"),
     (_config_mod.config_app, "config"),
     (_dataset_mod.dataset_app, "dataset"),
+    (_model_mod.model_app,   "model"),
     (_project_mod.project_app, "project"),
     (_plugin_mod.plugin_app, "plugin"),
     (_preset_mod.preset_app, "preset"),

@@ -135,6 +135,83 @@ def _mk_cfg(*, callback_enabled: bool) -> PipelineConfig:
     )
 
 
+def test_hf_wiring_invoked_when_pattern_a_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase M5: ``HFMlflowWiring.configure_training_args`` runs when
+    ``MLFLOW_RUN_ID`` is set, overwriting ``report_to`` to mlflow-only."""
+    monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
+
+    import ryotenkai_pod.trainer.trainer_builder as trainer_builder
+    monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
+
+    # Spy on the wiring helper to confirm it gets called with the
+    # training config instance.
+    from ryotenkai_pod.trainer.mlflow import hf_wiring as _hw
+
+    calls: list[tuple[Any, int | None]] = []
+
+    def _spy(args, *, local_rank=None) -> None:
+        calls.append((args, local_rank))
+        setattr(args, "report_to", ["mlflow"])
+
+    monkeypatch.setattr(_hw.HFMlflowWiring, "configure_training_args", _spy)
+
+    monkeypatch.setenv("MLFLOW_RUN_ID", "parent-1")
+    monkeypatch.setenv("LOCAL_RANK", "2")
+
+    cfg = _mk_cfg(callback_enabled=False)
+    factory = TrainerFactory()
+    trainer = factory.create(
+        strategy_type="sft",
+        model=MagicMock(),
+        tokenizer=MagicMock(),
+        train_dataset=MagicMock(),
+        config=cfg,
+        output_dir="output/phase_0_sft",
+        mlflow_manager=FakeMLflowManager(active=True),
+    )
+
+    # Wiring was called once with the live training_config and LOCAL_RANK=2.
+    assert len(calls) == 1
+    assert calls[0][1] == 2
+    # The spy stamped ``report_to`` onto the training config.
+    assert trainer.kwargs["args"].report_to == ["mlflow"]
+
+
+def test_hf_wiring_skipped_when_pattern_a_inactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Standalone trainer runs (no MLFLOW_RUN_ID) do NOT invoke HF wiring."""
+    monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
+
+    import ryotenkai_pod.trainer.trainer_builder as trainer_builder
+    monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
+
+    from ryotenkai_pod.trainer.mlflow import hf_wiring as _hw
+
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        _hw.HFMlflowWiring,
+        "configure_training_args",
+        lambda *a, **k: calls.append((a, k)),
+    )
+    monkeypatch.delenv("MLFLOW_RUN_ID", raising=False)
+
+    cfg = _mk_cfg(callback_enabled=False)
+    factory = TrainerFactory()
+    factory.create(
+        strategy_type="sft",
+        model=MagicMock(),
+        tokenizer=MagicMock(),
+        train_dataset=MagicMock(),
+        config=cfg,
+        output_dir="output/phase_0_sft",
+        mlflow_manager=FakeMLflowManager(active=True),
+    )
+    assert calls == []
+
+
 def test_callbacks_added_when_mlflow_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
 

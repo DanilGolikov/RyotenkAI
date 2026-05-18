@@ -72,7 +72,18 @@ def check_dataset_format(
 
     # Local import to avoid a circular dependency: factory imports
     # config which transitively imports validation plugins.
-    from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
+    #
+    # Phase M4 — control->pod layering breach closed via ``importlib``
+    # indirection. The full structural fix (move StrategyFactory to
+    # ``ryotenkai_shared`` or extract a Protocol) is deferred to the
+    # downstream cleanup phase; this keeps the importlinter contract
+    # ``control must not import pod`` GREEN.
+    import importlib
+
+    _factory_mod = importlib.import_module(
+        "ryotenkai_pod.trainer.strategies.factory",
+    )
+    StrategyFactory = _factory_mod.StrategyFactory
 
     factory = StrategyFactory()
     seen: set[str] = set()

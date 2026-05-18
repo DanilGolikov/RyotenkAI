@@ -233,6 +233,35 @@ class TrainerFactory:
         # Instantiate Config
         training_config = config_class(**config_kwargs)
 
+        # Phase M5 — Pattern A HF MLflow wiring. When the trainer is
+        # launched by the control plane the ``MLFLOW_RUN_ID`` env var
+        # is set; in that case force ``report_to=["mlflow"]`` and tag
+        # system metrics with the local rank via
+        # :meth:`mlflow.set_system_metrics_node_id`. The wiring is a
+        # no-op for standalone trainer runs (local dev with no parent
+        # run) -- ``configure_training_args`` only flips ``report_to``
+        # and the env-detection in HF's MLflowCallback short-circuits
+        # without MLFLOW_RUN_ID anyway. See plan §"Phase M4 follow-up:
+        # configure_training_args injection".
+        import os as _os
+
+        if _os.environ.get("MLFLOW_RUN_ID", "").strip():
+            from ryotenkai_pod.trainer.mlflow.hf_wiring import HFMlflowWiring
+
+            local_rank_raw = _os.environ.get("LOCAL_RANK")
+            local_rank: int | None
+            try:
+                local_rank = int(local_rank_raw) if local_rank_raw is not None else None
+            except ValueError:
+                local_rank = None
+            HFMlflowWiring.configure_training_args(
+                training_config, local_rank=local_rank,
+            )
+            logger.info(
+                "[TF:HF_WIRING] configure_training_args applied (local_rank=%s)",
+                local_rank,
+            )
+
         logger.debug(f"[TF:CONFIG_CREATED] config={config_class.__name__}, lr={learning_rate}, epochs={num_epochs}")
 
         # Convert string prompts to conversational format so TRL applies chat template.

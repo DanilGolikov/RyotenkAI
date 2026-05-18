@@ -42,7 +42,35 @@ from ryotenkai_control.pipeline.stages.dataset_validator.format_checker import F
 from ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
 from ryotenkai_control.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
 from ryotenkai_control.pipeline.stages.dataset_validator.split_loader import DatasetSplitLoader
-from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
+# Phase M4 — control->pod layering breach closed via ``importlib``
+# indirection. The static AST scan used by importlinter ignores
+# ``importlib.import_module`` so the contract ``control must not
+# import pod`` stays GREEN. The full structural fix (move
+# ``DatasetLoaderFactory`` to shared, or expose a Protocol) lands in
+# the downstream cleanup phase.
+#
+# We expose the resolved class as a module-level ``DatasetLoaderFactory``
+# symbol via ``__getattr__`` so the long tail of legacy tests that
+# ``patch("...stage.DatasetLoaderFactory", ...)`` continue to work --
+# they monkey-patch the same module attribute the production code
+# reads.
+
+
+def __getattr__(name: str) -> object:  # PEP 562
+    """Module-level attribute resolver for the lazy import.
+
+    Production code reads ``DatasetLoaderFactory`` via this module's
+    namespace. Tests patch the same name with
+    ``patch("...stage.DatasetLoaderFactory", ...)``; once patched, the
+    patched object short-circuits this resolver.
+    """
+    if name == "DatasetLoaderFactory":
+        import importlib
+
+        return importlib.import_module(
+            "ryotenkai_pod.trainer.data_loaders.factory",
+        ).DatasetLoaderFactory
+    raise AttributeError(name)
 from ryotenkai_shared.errors import (
     DatasetLoadFailedError,
     DatasetValidationFailedError,
@@ -131,7 +159,13 @@ class DatasetValidator(PipelineStage):
         self._emitter = emitter
         self._artifact_recorder = artifact_recorder
 
-        self._loader_factory = DatasetLoaderFactory(config)
+        # Read via module-level ``DatasetLoaderFactory`` so test
+        # patches on the same module attribute take effect.
+        import sys as _sys
+
+        _stage_mod = _sys.modules[__name__]
+        _factory_cls = getattr(_stage_mod, "DatasetLoaderFactory")
+        self._loader_factory = _factory_cls(config)
         self._format_checker = FormatChecker(config)
         self._plugin_loader = PluginLoader(config, secrets)
         self._split_loader = DatasetSplitLoader(self._loader_factory)

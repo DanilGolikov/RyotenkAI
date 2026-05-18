@@ -1,5 +1,21 @@
 """Upload ``events.jsonl`` + manifest to MLflow at run finalize (Phase 6.a).
 
+.. deprecated:: Phase M7 (cleanup backlog)
+    The lifecycle-tag half of this finalizer has been absorbed by
+    :class:`ryotenkai_control.pipeline.mlflow.lifecycle.finalizer.MlflowFinalizer`
+    (Phase M2). This module remains because the journal-upload half
+    is still invoked from
+    :class:`RunLifecycleCoordinator._upload_journal_to_mlflow`.
+
+    TODO(M7-cleanup): migrate the journal-upload half into
+    ``pipeline/mlflow/lifecycle/finalizer.py`` (or a sibling
+    ``JournalUploader``), then delete this file and remove the
+    re-export in ``packages/control/.../events/__init__.py``. The
+    matching ``tests/unit/control/events/test_mlflow_finalizer.py``
+    moves with the implementation.
+
+
+
 Algorithm (run finally block):
 
 1. Orchestrator's :meth:`ControlEventEmitter.close` flushed the journal
