@@ -547,3 +547,55 @@ ignore_imports = [
     # thing returned to callers.
     "ryotenkai_control.cleanup.hibernation_detector -> ryotenkai_shared.infrastructure.runpod_api",
 ]
+
+# ----------------------------------------------------------------------
+# Phase M1 (MLflow integration redesign): new contracts for the
+# narrow-Protocols layer.
+#
+# These contracts isolate the Phase-M1 components from the wider
+# repository so that subsequent phases (M2 control lifecycle, M4 pod
+# trainer rewire) cannot accidentally pull control/pod into shared.
+# See ``docs/plans/vectorized-fluttering-mist.md`` § Importlinter.
+# ----------------------------------------------------------------------
+
+[[tool.importlinter.contracts]]
+name = "M1: shared.infrastructure.mlflow stays leaf"
+type = "forbidden"
+source_modules = ["ryotenkai_shared.infrastructure.mlflow"]
+forbidden_modules = [
+    "ryotenkai_control",
+    "ryotenkai_pod",
+    "ryotenkai_providers",
+    "ryotenkai_community",
+]
+
+[[tool.importlinter.contracts]]
+name = "M1: shared.inference.prompts stays leaf"
+type = "forbidden"
+source_modules = ["ryotenkai_shared.inference.prompts"]
+forbidden_modules = [
+    "ryotenkai_control",
+    "ryotenkai_pod",
+    "ryotenkai_providers",
+    "ryotenkai_community",
+]
+
+[[tool.importlinter.contracts]]
+name = "M2: control.pipeline.mlflow must not import pod or providers"
+type = "forbidden"
+source_modules = ["ryotenkai_control.pipeline.mlflow"]
+forbidden_modules = [
+    "ryotenkai_pod",
+    "ryotenkai_providers",
+]
+
+[[tool.importlinter.contracts]]
+name = "M3: reports.composer and reports.slices must not import core.builder (decomposition isolation)"
+type = "forbidden"
+source_modules = [
+    "ryotenkai_control.reports.composer",
+    "ryotenkai_control.reports.slices",
+]
+forbidden_modules = [
+    "ryotenkai_control.reports.core.builder",
+]

@@ -10,7 +10,10 @@ Managers:
 - DataBuffer: Checkpoint management for multi-phase training
 - DataLoaderManager: Dataset loading and preparation
 - ModelSaverManager: Model saving and checkpoint management
-- MLflowManager: MLflow experiment tracking (self-hosted, free)
+
+(``MLflowManager`` deleted in M7 — Pattern A delegates MLflow logging
+to HF MLflowCallback; lifecycle is owned by control's
+``pipeline/mlflow/lifecycle`` package.)
 """
 
 from ryotenkai_pod.trainer.managers.data_buffer import (
@@ -21,7 +24,6 @@ from ryotenkai_pod.trainer.managers.data_buffer import (
     list_available_runs,
 )
 from ryotenkai_pod.trainer.managers.data_loader import DataLoaderManager
-from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager, get_mlflow_manager
 from ryotenkai_pod.trainer.managers.model_saver import ModelSaverManager
 
 __all__ = [
@@ -29,11 +31,9 @@ __all__ = [
     "DataBuffer",
     # Other managers
     "DataLoaderManager",
-    "MLflowManager",
     "ModelSaverManager",
     "PhaseState",
     "PhaseStatus",
     "PipelineState",
-    "get_mlflow_manager",
     "list_available_runs",
 ]

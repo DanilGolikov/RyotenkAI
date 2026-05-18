@@ -31,9 +31,8 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
 
-from ryotenkai_pod.runner.api.deps import get_bus, get_fsm, get_mlflow_relay
+from ryotenkai_pod.runner.api.deps import get_bus, get_fsm
 from ryotenkai_pod.runner.event_bus import envelope_to_wire
-from ryotenkai_pod.runner.mlflow_relay import MLFLOW_EVENT_KINDS
 from ryotenkai_shared.contracts.runner_api import EventResponse, InternalEventRequest
 from ryotenkai_shared.errors import (
     JobSpecInvalidError,
@@ -44,7 +43,6 @@ from ryotenkai_shared.events import EVENT_ADAPTER, UnknownEvent
 
 if TYPE_CHECKING:
     from ryotenkai_pod.runner.event_bus import EventBus
-    from ryotenkai_pod.runner.mlflow_relay import MLflowRelay
     from ryotenkai_pod.runner.state import JobLifecycleFSM
 
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -77,7 +75,6 @@ def push_event(
     request: Request,
     fsm: JobLifecycleFSM = Depends(get_fsm),
     bus: EventBus = Depends(get_bus),
-    mlflow_relay: MLflowRelay = Depends(get_mlflow_relay),
 ) -> EventResponse:
     _require_loopback(request)
 
@@ -122,12 +119,9 @@ def push_event(
         else:
             relay_payload = {}
 
-    # MLflow relay — forward MLflow-shaped events to the configured
-    # upstream when enabled. The relay still consumes the legacy
-    # ``{kind, payload}`` shape; we project the envelope's payload for
-    # it without re-validating.
-    if kind in MLFLOW_EVENT_KINDS:
-        mlflow_relay.submit({"kind": kind, "payload": relay_payload})
+    # MLflow relay was deleted in M7 — Pattern A has HF MLflowCallback
+    # adopt MLFLOW_RUN_ID directly inside the trainer process; no
+    # cross-process forwarding required.
 
     return EventResponse(
         offset=assigned_offset,

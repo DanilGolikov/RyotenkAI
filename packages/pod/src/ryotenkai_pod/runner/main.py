@@ -60,10 +60,6 @@ from ryotenkai_pod.runner.health_reporter import (
     DEFAULT_HEALTH_INTERVAL,
     HealthReporter,
 )
-from ryotenkai_pod.runner.mlflow_relay import (
-    MLflowRelay,
-    make_mlflow_forward_fn,
-)
 from ryotenkai_pod.runner.plugin_unpacker import PluginUnpacker
 from ryotenkai_pod.runner.heartbeat import MacHeartbeat
 from ryotenkai_pod.runner.pod_terminator import PodTerminator, run_terminal_hook
@@ -262,16 +258,6 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
             stdio_log_path=Path(str(pod_layout.trainer_stdio_log)),
         )
 
-        # Optional MLflow relay (Phase 4.3). Activated only when the
-        # operator opts in via ``RYOTENKAI_RUNNER_MLFLOW_RELAY=1`` AND
-        # an upstream URI is configured. In the default flow trainer
-        # talks to MLflow directly through ``ResilientMLflowTransport``;
-        # the relay adds a process-independent buffer + circuit
-        # breaker for deployments where the trainer cannot reach
-        # MLflow directly.
-        mlflow_relay = _build_mlflow_relay()
-        await mlflow_relay.start()
-
         # Periodic resource snapshot publisher — emits ``health_snapshot``
         # every :data:`DEFAULT_HEALTH_INTERVAL` seconds so the Mac
         # control plane can render `[MONITOR] ALIVE | …` status lines
@@ -291,7 +277,6 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         app.state.pod_terminator = pod_terminator  # Phase 11.B (renamed from pod_stopper)
         app.state.plugin_unpacker = plugin_unpacker
         app.state.supervisor = supervisor
-        app.state.mlflow_relay = mlflow_relay
         app.state.health_reporter = health_reporter
         # Phase 2 PR-2.3 (transport-unification-v2) — pod_layout
         # stored so the /api/v1/logs/{name} endpoint can resolve
@@ -320,7 +305,6 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
             await health_reporter.stop()
-            await mlflow_relay.stop()
             await supervisor.shutdown()
             bus.close()
 
@@ -389,34 +373,6 @@ async def _periodic_journal_health_check(
                 last_alerted = True
         else:
             last_alerted = False
-
-
-def _build_mlflow_relay() -> MLflowRelay:
-    """Build the MLflow relay based on env-driven configuration.
-
-    Activation contract:
-
-    - ``RYOTENKAI_RUNNER_MLFLOW_RELAY``  (1/true/on) — opt-in toggle.
-      Defaults to *off*, so existing deployments keep talking to
-      MLflow directly through the trainer's own resilient transport.
-    - ``MLFLOW_TRACKING_URI`` — required when relay is enabled;
-      missing/empty disables the relay even if the toggle is on.
-
-    A disabled relay still exists as a no-op object so endpoints
-    that depend on ``app.state.mlflow_relay`` don't have to gate
-    every call. ``submit()`` returns ``False`` and ``start()`` /
-    ``stop()`` are no-ops.
-    """
-    enabled = os.environ.get(
-        "RYOTENKAI_RUNNER_MLFLOW_RELAY", "",
-    ).strip().lower() in {"1", "true", "on", "yes"}
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
-
-    if not enabled or not tracking_uri:
-        return MLflowRelay(forward_fn=None)
-
-    forward_fn = make_mlflow_forward_fn(tracking_uri)
-    return MLflowRelay(forward_fn=forward_fn)
 
 
 def create_app(

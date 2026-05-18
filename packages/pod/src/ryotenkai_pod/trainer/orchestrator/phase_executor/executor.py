@@ -15,11 +15,51 @@ from ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache import (
     AdapterCacheManager,
     _retry_call,
 )
-from ryotenkai_pod.trainer.orchestrator.phase_executor.mlflow_logger import MlflowPhaseLogger
 from ryotenkai_pod.trainer.orchestrator.phase_executor.training_runner import (
     TRAINING_INTERRUPTED_LEGACY_CODE,
     PhaseTrainingRunner,
 )
+
+
+class _NoOpMlflowPhaseLogger:
+    """Stub for the deleted ``MlflowPhaseLogger``.
+
+    Pattern A (M4) makes the HF Trainer's MLflow callback adopt the
+    parent run via ``MLFLOW_RUN_ID`` + ``MLFLOW_NESTED_RUN=TRUE``, so
+    starting nested runs from the trainer subprocess is no longer
+    needed. Phase-level observability now flows through typed events
+    on the journal. All methods are inert.
+    """
+
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    def start_nested_run(self, *_args: Any, **_kwargs: Any) -> Any:
+        return None
+
+    def end_nested_run(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def log_phase_start(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def log_cache_hit(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def log_completion(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def log_dataset(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def log_error(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+# Public alias preserved for callers that still type-annotate against
+# ``MlflowPhaseLogger`` (no production code should rely on the legacy
+# concrete API any more).
+MlflowPhaseLogger = _NoOpMlflowPhaseLogger
 from ryotenkai_shared.errors import RyotenkAIError, TrainingFailedError
 from ryotenkai_shared.utils.logger import logger
 

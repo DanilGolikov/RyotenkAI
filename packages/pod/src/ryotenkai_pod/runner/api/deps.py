@@ -17,7 +17,6 @@ from fastapi import Request
 if TYPE_CHECKING:
     from ryotenkai_pod.runner.event_bus import EventBus
     from ryotenkai_pod.runner.heartbeat import MacHeartbeat
-    from ryotenkai_pod.runner.mlflow_relay import MLflowRelay
     from ryotenkai_pod.runner.plugin_unpacker import PluginUnpacker
     from ryotenkai_pod.runner.state import JobLifecycleFSM
     from ryotenkai_pod.runner.supervisor import Supervisor
@@ -26,7 +25,6 @@ __all__ = [
     "get_bus",
     "get_fsm",
     "get_heartbeat",
-    "get_mlflow_relay",
     "get_plugin_unpacker",
     "get_supervisor",
 ]
@@ -50,16 +48,6 @@ def get_supervisor(request: Request) -> "Supervisor":
 def get_plugin_unpacker(request: Request) -> "PluginUnpacker":
     """Return the plugin unpacker bound to the live FastAPI app."""
     return request.app.state.plugin_unpacker  # type: ignore[no-any-return]
-
-
-def get_mlflow_relay(request: Request) -> "MLflowRelay":
-    """Return the MLflow relay bound to the live FastAPI app.
-
-    Always returns an :class:`MLflowRelay` — disabled deployments
-    get a no-op instance so handlers can call ``.submit()`` without
-    branching on configuration.
-    """
-    return request.app.state.mlflow_relay  # type: ignore[no-any-return]
 
 
 def get_heartbeat(request: Request) -> "MacHeartbeat":

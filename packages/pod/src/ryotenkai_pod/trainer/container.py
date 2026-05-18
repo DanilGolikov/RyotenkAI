@@ -261,7 +261,6 @@ class TrainingContainer:
     _lazy_strategy_factory: IStrategyFactory | None = field(default=None, repr=False)
     _lazy_trainer_factory: ITrainerFactory | None = field(default=None, repr=False)
     _lazy_dataset_loader: IDatasetLoader | None = field(default=None, repr=False)
-    _lazy_mlflow_manager: IMLflowManager | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Log container initialization."""
@@ -452,23 +451,16 @@ class TrainingContainer:
         """
         Get MLflowManager instance.
 
-        Returns injected mock or creates real MLflowManager instance.
+        Post-M7 cleanup: the legacy ``MLflowManager`` god-class is gone.
+        Pattern A (HF Trainer's MLflow callback adopts ``MLFLOW_RUN_ID``)
+        means the trainer no longer needs an in-process manager. This
+        property still honours an explicitly injected stub (tests) but
+        otherwise returns ``None``.
 
         Returns:
-            IMLflowManager | None: MLflow manager instance
+            IMLflowManager | None: injected stub or ``None``.
         """
-        if self._mlflow_manager is not None:
-            return self._mlflow_manager
-
-        # Lazy initialization of real MLflowManager
-        if self._lazy_mlflow_manager is None:
-            from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
-
-            # PyCharm: may not reliably treat Protocols as structural types here (false positive).
-            self._lazy_mlflow_manager = cast("IMLflowManager", cast("object", MLflowManager(self.config)))
-            logger.debug("[CONTAINER:MLFLOW_CREATED] MLflowManager instance created")
-
-        return self._lazy_mlflow_manager
+        return self._mlflow_manager
 
     # =========================================================================
     # COMPLETION NOTIFIER (REMOVED — Phase 6.3b)
