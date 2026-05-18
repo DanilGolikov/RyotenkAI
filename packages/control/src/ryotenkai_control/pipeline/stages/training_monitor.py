@@ -37,6 +37,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from ryotenkai_control.pipeline.mlflow.read.client import MlflowReadClient
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_control.pipeline.stages.managers.log_fetcher import LogFetcher
@@ -113,6 +114,21 @@ _TERMINAL_CANCELLED = "cancelled"
 _TERMINAL_STATES = frozenset({_TERMINAL_COMPLETED, _TERMINAL_FAILED, _TERMINAL_CANCELLED})
 
 
+def _resolve_mlflow_client(run_query: MlflowReadClient | None) -> Any | None:
+    """Phase M3.B: prefer the DI'd client; fall back to a lazy URI lookup."""
+    if run_query is not None:
+        return run_query.underlying_client
+    import os  # noqa: PLC0415
+    env_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
+    if not env_uri:
+        return None
+    try:
+        return MlflowReadClient(tracking_uri=env_uri).underlying_client
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[MONITOR] MlflowReadClient construction failed: %s", exc)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Monitor
 # ---------------------------------------------------------------------------
@@ -148,10 +164,14 @@ class TrainingMonitor(PipelineStage):
         secrets: Secrets | None = None,
         *,
         emitter: IEventEmitter | None = None,
+        run_query: MlflowReadClient | None = None,
     ) -> None:
         super().__init__(config, StageNames.TRAINING_MONITOR)
         self._secrets = secrets
         self._emitter = emitter
+        # Phase M3.B: ``run_query`` is the DI'd MLflow read surface used
+        # by reconciliation; falls back to a lazy URI lookup.
+        self._run_query = run_query
         self._training_start_time: float = 0.0
         # Tracks the wall-clock instant we last saw an event from the
         # pod. ``ReplayTruncated``/``JobClient`` errors fire a typed
@@ -601,10 +621,19 @@ class TrainingMonitor(PipelineStage):
         payload: dict[str, Any],
     ) -> None:
         """Force MLflow run from RUNNING → ``target_status``. Best-effort."""
+        # Phase M3.B: prefer the DI'd MlflowReadClient via ``_run_query``;
+        # fall back to a lazy URI lookup so tests + monitors built via
+        # ``TrainingMonitor.__new__`` keep working without the DI argument.
         try:
-            from mlflow.tracking import MlflowClient
-
-            client = MlflowClient()
+            client = _resolve_mlflow_client(getattr(self, "_run_query", None))
+            if client is None:
+                logger.warning(
+                    "[MONITOR] %s reconciliation for run_id=%s skipped: "
+                    "no MLflow client available",
+                    marker_name,
+                    run_id,
+                )
+                return
             run = client.get_run(run_id)
             current_status = getattr(
                 getattr(run, "info", None),

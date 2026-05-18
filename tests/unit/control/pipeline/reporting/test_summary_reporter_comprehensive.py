@@ -255,26 +255,28 @@ class TestRegressions:
         assert metrics["total_train_runtime"] == 100.0
         assert metrics["total_train_steps"] == 50.0
 
-    def test_regression_deque_used_for_bfs(self) -> None:
-        """REGRESSION: list.pop(0) is O(n); deque.popleft is O(1).
+    def test_regression_no_quadratic_bfs(self) -> None:
+        """REGRESSION: ``list.pop(0)`` is O(n); the BFS must avoid it.
 
-        Assert that the actual implementation uses deque + popleft — compile
-        the method source and inspect it after stripping comments/strings
-        to avoid false positives from documentation.
+        Phase M3.B routes the traversal through :class:`RunTreeWalker`
+        which uses recursion on small fan-outs; either the walker is
+        invoked or the legacy ``deque``-based fallback is used. The
+        only failure mode this test guards against is the
+        ``list.pop(0)`` regression.
         """
         import inspect
         import re
 
         src = inspect.getsource(ExecutionSummaryReporter.collect_descendant_metrics)
-        # Strip docstring/comments/string literals — we only want real code
+        # Strip docstring/comments/string literals.
         code_only = re.sub(r'"""[\s\S]*?"""', "", src)
         code_only = re.sub(r"'[^'\n]*'", "''", code_only)
         code_only = re.sub(r'"[^"\n]*"', '""', code_only)
         code_only = re.sub(r"#.*", "", code_only)
 
-        assert "deque" in code_only
-        assert "popleft" in code_only
-        # No list.pop(0) left in actual code (doc comments OK)
+        # Topology comes from the walker; metric fetch is per-handle.
+        assert "RunTreeWalker" in code_only or "flat_descendants" in code_only
+        # No list.pop(0) left.
         assert re.search(r"\bpop\(0\)", code_only) is None
 
     def test_regression_tracking_uri_via_public_property(self) -> None:

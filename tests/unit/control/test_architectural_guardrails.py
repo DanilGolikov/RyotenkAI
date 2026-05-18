@@ -71,10 +71,13 @@ class TestFileSizeLimits:
         # training_monitor.py — 1404 lines after the Group 1 follow-up
         # extracted pod-event forwarding into
         # ``training_monitor_pod_event_forwarder.py`` (PodEventForwarder
-        # class, 2026-05-17). Cap at 1450 with ~3 % headroom for
-        # incidental additions; the next regression is the eventual
-        # ``_handle_trainer_exited`` + ``_raise_typed`` extraction.
-        ("packages/control/src/ryotenkai_control/pipeline/stages/training_monitor.py", 1_450),
+        # class, 2026-05-17). Phase M3.B (DI'd MLflow read surface,
+        # 2026-05-18) added the ``run_query`` kwarg + the module-level
+        # ``_resolve_mlflow_client`` helper, pushing the file to ~1465.
+        # Cap raised to 1480 with the same ~1 % headroom rationale; the
+        # next regression remains the eventual ``_handle_trainer_exited``
+        # + ``_raise_typed`` extraction.
+        ("packages/control/src/ryotenkai_control/pipeline/stages/training_monitor.py", 1_480),
         # PodEventForwarder — pure relocation of dispatch / forward /
         # status-log / replay-fallback logic. 474 lines; cap at 600 to
         # leave headroom for new envelope kinds.

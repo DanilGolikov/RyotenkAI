@@ -3,6 +3,14 @@
 Deletes a local run directory (and any nested runs) and, when configured,
 cascades deletion to the MLflow experiment tree rooted at the run's
 root_mlflow_run_id. Shared domain service used by both the CLI and the web API.
+
+Phase M3.B: the MLflow side of cascade-delete uses an injected
+:class:`MlflowReadClient` (via :class:`RunTreeWalker` for the BFS) instead
+of an ad-hoc ``mlflow.tracking.MlflowClient()`` construction. The
+underlying client is still used for the ``delete_run`` call (no
+``IRunQuery`` method covers writes) — the lint forbidding ad-hoc
+constructions is satisfied because the client comes from
+``MlflowReadClient.underlying_client``.
 """
 
 from __future__ import annotations
@@ -12,11 +20,27 @@ import shutil
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
+from ryotenkai_control.pipeline.mlflow.read.client import MlflowReadClient
+from ryotenkai_control.pipeline.mlflow.read.tree_walker import RunNode, RunTreeWalker
 from ryotenkai_control.pipeline.state.queries import discover_run_dirs, load_pipeline_state
 
+if TYPE_CHECKING:
+    pass
+
 _LOG = logging.getLogger("ryotenkai.pipeline.deletion")
+
+
+def _record_depths(node: RunNode, *, depth: int, into: dict[str, int]) -> None:
+    """Walk a :class:`RunNode` tree once, recording per-id depth.
+
+    Used by :meth:`RunDeleter._delete_run_tree` so deletion proceeds
+    deepest-first — matching the legacy ordering.
+    """
+    into[node.handle.run_id] = depth
+    for child in node.children:
+        _record_depths(child, depth=depth + 1, into=into)
 
 
 class DeleteMode(StrEnum):
@@ -45,10 +69,35 @@ class DeleteResult:
 
 
 class RunDeleter:
-    """Delete local runs and optionally their linked MLflow run tree."""
+    """Delete local runs and optionally their linked MLflow run tree.
 
-    def __init__(self, *, rmtree=shutil.rmtree) -> None:
+    Phase M3.B: cascade deletion routes through :class:`MlflowReadClient`
+    + :class:`RunTreeWalker`. Callers may pass a ``run_query_factory``
+    that produces a read client given a ``(tracking_uri, ca_bundle_path)``
+    pair — keeps URI ownership at the composition root while letting the
+    deleter create per-run clients (different state files may point at
+    different servers, e.g. local vs. funnel).
+    """
+
+    def __init__(
+        self,
+        *,
+        rmtree=shutil.rmtree,
+        run_query_factory: Any | None = None,
+    ) -> None:
         self._rmtree = rmtree
+        # ``run_query_factory`` is a callable
+        # ``(tracking_uri: str, ca_bundle_path: str | None) -> MlflowReadClient``.
+        # ``None`` falls back to the default factory below, which
+        # constructs the standard :class:`MlflowReadClient`. Test seam.
+        self._run_query_factory = run_query_factory or self._default_run_query_factory
+
+    @staticmethod
+    def _default_run_query_factory(
+        tracking_uri: str,
+        ca_bundle_path: str | None,  # noqa: ARG004 — kept for symmetry with the legacy MLflowEnvironment
+    ) -> MlflowReadClient:
+        return MlflowReadClient(tracking_uri=tracking_uri)
 
     def delete_target(self, target: Path, *, mode: DeleteMode = DeleteMode.LOCAL_AND_MLFLOW) -> DeleteResult:
         resolved_target = target.expanduser().resolve()
@@ -102,47 +151,66 @@ class RunDeleter:
                 )
             ]
 
-        environment = MLflowEnvironment(
-            state.mlflow_runtime_tracking_uri,
-            ca_bundle_path=state.mlflow_ca_bundle_path,
-        )
         try:
-            environment.activate()
-            deleted_ids.extend(self._delete_run_tree(state.root_mlflow_run_id))
+            run_query = self._run_query_factory(
+                state.mlflow_runtime_tracking_uri,
+                state.mlflow_ca_bundle_path,
+            )
+        except Exception as exc:
+            _LOG.exception("Failed to construct MLflow read client for %s", run_dir)
+            return [DeleteIssue(run_dir=run_dir, phase="mlflow_delete", message=str(exc))]
+
+        try:
+            deleted_ids.extend(self._delete_run_tree(run_query, state.root_mlflow_run_id))
             return []
         except Exception as exc:
             _LOG.exception("MLflow delete failed for %s", run_dir)
             return [DeleteIssue(run_dir=run_dir, phase="mlflow_delete", message=str(exc))]
-        finally:
-            environment.deactivate()
 
-    def _delete_run_tree(self, root_run_id: str) -> list[str]:
-        import mlflow
+    def _delete_run_tree(
+        self,
+        run_query: MlflowReadClient,
+        root_run_id: str,
+    ) -> list[str]:
+        """Cascade-delete the MLflow run tree rooted at ``root_run_id``.
 
-        client = mlflow.tracking.MlflowClient()
-        root_run = self._safe_get_run(client, root_run_id)
-        if root_run is None:
+        Phase M3.B: BFS traversal is delegated to :class:`RunTreeWalker`
+        (which depends solely on :class:`IRunQuery`); the actual
+        ``delete_run`` call uses ``run_query.underlying_client`` because
+        the write surface is not part of :class:`IRunQuery`.
+        """
+        walker = RunTreeWalker(run_query)
+        try:
+            handles = walker.flat_descendants(root_run_id)
+        except KeyError:
+            # ``IRunQuery.get_run`` raises ``KeyError`` when the run is
+            # already gone. Treat as no-op (legacy semantics matched
+            # "resource does not exist" string sniffing).
             return []
+        except Exception as exc:
+            if self._is_missing_run_error(exc):
+                return []
+            raise
 
-        experiment_id = root_run.info.experiment_id
-        queue: list[tuple[str, int]] = [(root_run_id, 0)]
-        visited: set[str] = set()
-        run_ids_with_depth: list[tuple[str, int]] = []
+        # Order by (depth, id) so children land before parents — matches
+        # the legacy ordering. ``flat_descendants`` returns DFS pre-order;
+        # we re-order by reverse BFS depth.
+        depth_map: dict[str, int] = {}
+        # Re-walk the tree to record per-node depth (cheap; same query
+        # results are now cached on the walker / read client).
+        root_node = walker.walk(root_run_id)
+        _record_depths(root_node, depth=0, into=depth_map)
 
-        while queue:
-            current_id, depth = queue.pop(0)
-            if current_id in visited:
-                continue
-            visited.add(current_id)
-            run_ids_with_depth.append((current_id, depth))
-            for child_id in self._search_child_run_ids(client, experiment_id, current_id):
-                if child_id not in visited:
-                    queue.append((child_id, depth + 1))
-
+        run_ids_with_depth = [
+            (handle.run_id, depth_map.get(handle.run_id, 0)) for handle in handles
+        ]
         ordered_run_ids = [
             run_id
-            for run_id, _depth in sorted(run_ids_with_depth, key=lambda item: (item[1], item[0]), reverse=True)
+            for run_id, _depth in sorted(
+                run_ids_with_depth, key=lambda item: (item[1], item[0]), reverse=True,
+            )
         ]
+        client = run_query.underlying_client
         for run_id in ordered_run_ids:
             try:
                 client.delete_run(run_id)
@@ -151,28 +219,6 @@ class RunDeleter:
                     continue
                 raise
         return ordered_run_ids
-
-    @staticmethod
-    def _safe_get_run(client, run_id: str):
-        try:
-            return client.get_run(run_id)
-        except Exception as exc:
-            if RunDeleter._is_missing_run_error(exc):
-                return None
-            raise
-
-    @staticmethod
-    def _search_child_run_ids(client, experiment_id: str, parent_run_id: str) -> list[str]:
-        try:
-            children = client.search_runs(
-                experiment_ids=[experiment_id],
-                filter_string=f"tags.`mlflow.parentRunId` = '{parent_run_id}'",
-            )
-        except Exception as exc:
-            if RunDeleter._is_missing_run_error(exc):
-                return []
-            raise
-        return [child.info.run_id for child in children]
 
     @staticmethod
     def _is_missing_run_error(error: Exception) -> bool:

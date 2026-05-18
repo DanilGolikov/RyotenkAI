@@ -31,11 +31,16 @@ def test_delete_target_removes_remote_then_local(tmp_path: Path, monkeypatch) ->
     (run_dir / "payload.txt").write_text("hello", encoding="utf-8")
     _write_state(run_dir, config_path=config_path, root_mlflow_run_id="root_1")
     calls: list[str] = []
-    backend = TuiDeleteBackend()
+    backend = TuiDeleteBackend(
+        run_query_factory=lambda _uri, _ca: object(),
+    )
+    # Phase M3.B: ``_delete_run_tree`` now takes the read client + the
+    # root id. Tests inject a fake factory that yields a sentinel and
+    # patch the tree-delete method to capture only the root id.
     monkeypatch.setattr(
         backend,
         "_delete_run_tree",
-        lambda root_run_id: calls.append(root_run_id) or ["child_1", "root_1"],
+        lambda _run_query, root_run_id: calls.append(root_run_id) or ["child_1", "root_1"],
     )
 
     result = backend.delete_target(run_dir)

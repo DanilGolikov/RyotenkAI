@@ -67,11 +67,21 @@ TrainingMonitor = _monitor_mod.TrainingMonitor
 # ---------------------------------------------------------------------------
 
 
-def _make_monitor() -> TrainingMonitor:
+def _make_monitor(*, mlflow_client: Any = None) -> TrainingMonitor:
     """Construct a bare TrainingMonitor — bypasses parent __init__
     because reconciliation only touches ``self`` for the logger
-    surface, which is module-level."""
+    surface, which is module-level.
+
+    Phase M3.B: ``_force_mlflow_run_status`` no longer imports
+    :class:`MlflowClient` lazily — it asks the monitor's
+    :attr:`_run_query` for the underlying client. Tests that exercise
+    the reconciliation path inject a fake client via this helper; we
+    install a :class:`SimpleNamespace` carrying the fake under
+    ``underlying_client`` so :meth:`_resolve_mlflow_client` sees it.
+    """
     monitor = TrainingMonitor.__new__(TrainingMonitor)
+    if mlflow_client is not None:
+        monitor._run_query = SimpleNamespace(underlying_client=mlflow_client)
     return monitor
 
 
@@ -143,16 +153,10 @@ class TestPositive:
         fake_client.set_terminated = MagicMock(return_value=None)
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                monitor = _make_monitor()
-                # Must not raise; must call set_terminated exactly once
-                # with the expected args.
-                monitor._reconcile_terminal_marker_if_present(ctx)
+            monitor = _make_monitor(mlflow_client=fake_client)
+            # Must not raise; must call set_terminated exactly once
+            # with the expected args.
+            monitor._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.get_run.assert_called_once_with("run-001")
         fake_client.set_terminated.assert_called_once_with(
@@ -174,16 +178,10 @@ class TestNegative:
         fake_client = MagicMock()
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         # Nothing on the MLflow surface should have fired — the
-        # function bails before importing MlflowClient.
+        # function bails before reaching the client.
         fake_client.get_run.assert_not_called()
         fake_client.set_terminated.assert_not_called()
 
@@ -193,13 +191,7 @@ class TestNegative:
         fake_client = MagicMock()
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.get_run.assert_not_called()
 
@@ -216,13 +208,7 @@ class TestBoundary:
         fake_client = MagicMock()
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.get_run.assert_not_called()
 
@@ -233,14 +219,8 @@ class TestBoundary:
         fake_client = MagicMock()
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                # Must not raise.
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            # Must not raise.
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
         fake_client.get_run.assert_not_called()
 
 
@@ -262,14 +242,8 @@ class TestInvariants:
         )
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                # MUST NOT raise.
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            # MUST NOT raise.
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         # set_terminated never called because get_run blew up.
         fake_client.set_terminated.assert_not_called()
@@ -287,13 +261,7 @@ class TestInvariants:
         fake_client.set_terminated.side_effect = RuntimeError("HTTP 500")
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -306,18 +274,18 @@ class TestDependencyErrors:
         _write_marker(tmp_path, run_id="z")
         ctx = _ctx_with_attempt(tmp_path)
 
-        def _broken_constructor():
-            raise RuntimeError("env not set")
+        # Phase M3.B: simulate construction failure by injecting a
+        # run_query whose ``underlying_client`` access raises.
+        class _BrokenRunQuery:
+            @property
+            def underlying_client(self):  # pragma: no cover — invoked via attribute access
+                raise RuntimeError("env not set")
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=_broken_constructor,
-                )},
-            ):
-                # Must not raise.
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            monitor = _make_monitor()
+            monitor._run_query = _BrokenRunQuery()
+            # Must not raise.
+            monitor._reconcile_terminal_marker_if_present(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -336,13 +304,7 @@ class TestRegressions:
         )
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         # Already terminal → no double set.
         fake_client.set_terminated.assert_not_called()
@@ -357,13 +319,7 @@ class TestRegressions:
         )
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.set_terminated.assert_not_called()
 
@@ -379,13 +335,7 @@ class TestRegressions:
         )
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.set_terminated.assert_not_called()
 
@@ -403,13 +353,7 @@ class TestLogicSpecific:
         fake_client = MagicMock()
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.get_run.assert_not_called()
 
@@ -418,13 +362,7 @@ class TestLogicSpecific:
         fake_client = MagicMock()
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.get_run.assert_not_called()
 
@@ -475,13 +413,7 @@ class TestCompletionMarkerReconciliation:
         fake_client.set_terminated = MagicMock(return_value=None)
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         # Forced to FINISHED, not KILLED.
         fake_client.set_terminated.assert_called_once_with(
@@ -509,13 +441,7 @@ class TestCompletionMarkerReconciliation:
         )
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.set_terminated.assert_called_once_with(
             run_id="run-c-tt", status="FINISHED",
@@ -535,13 +461,7 @@ class TestCompletionMarkerReconciliation:
         )
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.set_terminated.assert_not_called()
 
@@ -563,13 +483,7 @@ class TestCompletionMarkerReconciliation:
         )
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         # KILLED (cancellation wins), exactly one set_terminated call.
         fake_client.set_terminated.assert_called_once_with(
@@ -588,13 +502,7 @@ class TestCompletionMarkerReconciliation:
         fake_client = MagicMock()
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.get_run.assert_not_called()
 
@@ -606,12 +514,6 @@ class TestCompletionMarkerReconciliation:
         fake_client = MagicMock()
 
         with _patch_pipeline_context_keys():
-            with patch.dict(
-                sys.modules,
-                {"mlflow.tracking": SimpleNamespace(
-                    MlflowClient=lambda: fake_client,
-                )},
-            ):
-                _make_monitor()._reconcile_terminal_marker_if_present(ctx)
+            _make_monitor(mlflow_client=fake_client)._reconcile_terminal_marker_if_present(ctx)
 
         fake_client.get_run.assert_not_called()

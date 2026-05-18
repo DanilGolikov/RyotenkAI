@@ -27,9 +27,31 @@ from ryotenkai_control.reports.report_generator import ExperimentReportGenerator
 
 @pytest.fixture
 def mock_mlflow_client(mocker):
-    """Mock MlflowClient using mocker for proper cleanup."""
-    mock = mocker.patch("ryotenkai_control.reports.adapters.mlflow_adapter.MlflowClient")
-    return mock.return_value
+    """Mock the underlying MlflowClient surface exposed by MlflowReadClient.
+
+    Phase M3.B: MLflowAdapter no longer constructs ``MlflowClient`` directly —
+    it accepts a :class:`MlflowReadClient` (or builds one internally from a
+    tracking URI / gateway). To keep the legacy test shape, we monkey-patch
+    :class:`MlflowReadClient.__init__` so it installs a freshly-created
+    ``MagicMock`` as the underlying client without touching the real MLflow
+    SDK.
+    """
+    import threading
+    from collections import OrderedDict
+
+    from ryotenkai_control.pipeline.mlflow.read.client import MlflowReadClient
+
+    underlying_mock = mocker.MagicMock(name="underlying_mlflow_client")
+
+    def _init(self, tracking_uri, *_args, **_kwargs):
+        self._tracking_uri = tracking_uri
+        self._client = underlying_mock
+        self._request_timeout_s = 30.0
+        self._lock = threading.Lock()
+        self._cache = OrderedDict()
+
+    mocker.patch.object(MlflowReadClient, "__init__", _init)
+    return underlying_mock
 
 
 @pytest.fixture

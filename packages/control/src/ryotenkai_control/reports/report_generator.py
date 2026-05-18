@@ -20,10 +20,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import mlflow
-from mlflow.tracking import MlflowClient
-
 from ryotenkai_community.catalog import catalog
+from ryotenkai_control.pipeline.mlflow.read.client import MlflowReadClient
 from ryotenkai_control.reports.adapters.journal_adapter import JournalReportAdapter
 from ryotenkai_control.reports.adapters.mlflow_adapter import MLflowAdapter
 from ryotenkai_control.reports.core.builder import ReportBuilder
@@ -53,6 +51,7 @@ class ExperimentReportGenerator:
         tracking_uri: str | None = None,
         *,
         gateway: IMLflowGateway | None = None,
+        run_query: MlflowReadClient | None = None,
         adapter: IExperimentDataProvider | None = None,
         journal_adapter: JournalReportAdapter | None = None,
         mlflow_manager: IMLflowManager | None = None,
@@ -64,7 +63,11 @@ class ExperimentReportGenerator:
 
         Args:
             tracking_uri:     MLflow tracking URI (legacy, used when gateway is not provided).
-            gateway:          IMLflowGateway instance. Takes precedence over tracking_uri.
+            gateway:          IMLflowGateway instance. Used to derive the URI for the read
+                              client.
+            run_query:        Pre-built :class:`MlflowReadClient`. Phase M3.B preferred
+                              entry point — when provided, no global tracking-URI
+                              mutation is performed.
             adapter:          MLflow metadata provider (defaults to MLflowAdapter).
             journal_adapter:  Event-journal provider (defaults to JournalReportAdapter
                               bound to ``mlflow_manager`` for the artifact fallback path).
@@ -77,18 +80,24 @@ class ExperimentReportGenerator:
             sections:         Ordered list of plugin ids to render. ``None`` uses the
                               built-in default (see ``DEFAULT_REPORT_SECTIONS``).
         """
-        if gateway is not None:
+        # Phase M3.B: construct exactly one MlflowReadClient and route the
+        # underlying client through it. No ``mlflow.set_tracking_uri``
+        # mutation — the read client owns the URI.
+        if run_query is not None:
+            self._run_query = run_query
+            self._tracking_uri = run_query.tracking_uri
+        elif gateway is not None:
             self._tracking_uri = gateway.uri
-            self._client = gateway.get_client()
-            mlflow.set_tracking_uri(gateway.uri)
-            self._adapter = adapter or MLflowAdapter(gateway=gateway)
+            self._run_query = MlflowReadClient(tracking_uri=gateway.uri)
         elif tracking_uri is not None:
             self._tracking_uri = tracking_uri
-            self._client = MlflowClient(tracking_uri=tracking_uri)
-            mlflow.set_tracking_uri(tracking_uri)
-            self._adapter = adapter or MLflowAdapter(tracking_uri)
+            self._run_query = MlflowReadClient(tracking_uri=tracking_uri)
         else:
-            raise ValueError("Either tracking_uri or gateway must be provided")
+            raise ValueError(
+                "One of run_query, gateway, or tracking_uri must be provided"
+            )
+        self._client = self._run_query.underlying_client
+        self._adapter = adapter or MLflowAdapter(run_query=self._run_query)
 
         self._journal_adapter = journal_adapter or JournalReportAdapter(mlflow_manager=mlflow_manager)
 

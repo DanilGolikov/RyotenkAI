@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ryotenkai_control.pipeline.mlflow.read.client import MlflowReadClient
 from ryotenkai_control.pipeline.stages.model_retriever.constants import MR_SSH_PORT_DEFAULT
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
@@ -66,10 +67,17 @@ class ModelRetriever(PipelineStage):
         secrets: Secrets,
         *,
         emitter: IEventEmitter | None = None,
+        run_query: MlflowReadClient | None = None,
     ):
+        """Phase M3.B: ``run_query`` is the DI'd MLflow read surface used by
+        the metrics-replay path. Constructed by the composition root (CLI /
+        API). When ``None`` (legacy callers, tests), the replay path falls
+        back to lazy construction via :meth:`_build_mlflow_client`.
+        """
         super().__init__(config, StageNames.MODEL_RETRIEVER)
         self.secrets = secrets
         self._emitter = emitter
+        self._run_query = run_query
 
         self._provider_name = config.get_active_provider_name()
         self._provider_config = config.get_provider_config()
@@ -645,24 +653,43 @@ class ModelRetriever(PipelineStage):
         except (TypeError, ValueError):
             return None
 
-    @staticmethod
-    def _build_mlflow_client() -> Any | None:
-        """Construct an :class:`mlflow.tracking.MlflowClient` if MLflow
-        is importable. Returns ``None`` when the package is absent or
-        construction fails (e.g. malformed tracking URI). Replay then
-        gracefully no-ops with the buffer file preserved locally.
+    def _build_mlflow_client(self) -> Any | None:
+        """Return the MLflow client used by metrics-buffer replay.
+
+        Phase M3.B: prefers the DI'd :class:`MlflowReadClient` injected at
+        construction time and exposes its ``underlying_client`` (which
+        carries the ``log_metric`` / ``log_batch`` surface needed by
+        :class:`BufferedMetricsReplay`). Falls back to a lazy
+        :class:`MlflowReadClient()` construction against the ambient
+        ``MLFLOW_TRACKING_URI`` so legacy callers (tests, manual replay)
+        keep working. Returns ``None`` when MLflow is unavailable or the
+        URI cannot be resolved — replay then gracefully no-ops with the
+        buffer file preserved locally.
         """
-        try:
-            from mlflow.tracking import MlflowClient
-        except ImportError:
-            return None
-        try:
-            return MlflowClient()
-        except Exception as exc:  # noqa: BLE001 — defensive
+        if self._run_query is not None:
+            return self._run_query.underlying_client
+        # Legacy fallback: construct an MlflowReadClient against the
+        # ambient env URI. This still routes through the DI'd surface
+        # (Phase M7 lint forbids ad-hoc ``MlflowClient(...)`` outside
+        # ``read/client.py``).
+        import os
+
+        env_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
+        if not env_uri:
             logger.warning(
-                "[METRICS_REPLAY] MlflowClient construction failed: %s", exc,
+                "[METRICS_REPLAY] no MlflowReadClient injected and "
+                "MLFLOW_TRACKING_URI is unset; replay will no-op",
             )
             return None
+        try:
+            client = MlflowReadClient(tracking_uri=env_uri)
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning(
+                "[METRICS_REPLAY] MlflowReadClient construction failed: %s",
+                exc,
+            )
+            return None
+        return client.underlying_client
 
     def _execute_mock(
         self, context: dict[str, Any], resource_id: str

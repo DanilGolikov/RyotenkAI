@@ -23,7 +23,11 @@ def get_or_generate_report(run_dir: Path, *, regenerate: bool = False) -> Report
     # Import lazily to avoid pulling MLflow on every call.
     from ryotenkai_control.reports.report_generator import ExperimentReportGenerator
 
-    generator = ExperimentReportGenerator()
+    # Phase M3.B: pass the persisted runtime tracking URI through the
+    # new DI'd entry point so the generator owns exactly one
+    # MlflowReadClient for the lifetime of the call.
+    tracking_uri = state.mlflow_runtime_tracking_uri or "http://localhost:5002"
+    generator = ExperimentReportGenerator(tracking_uri=tracking_uri)
     markdown = generator.generate(state.root_mlflow_run_id, local_logs_dir=run_dir)
     report_path.write_text(markdown, encoding="utf-8")
     return ReportResponse(

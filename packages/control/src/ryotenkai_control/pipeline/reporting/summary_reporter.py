@@ -11,7 +11,6 @@ that mutable state.
 
 from __future__ import annotations
 
-from collections import deque
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -29,6 +28,8 @@ from ryotenkai_control.pipeline.constants import (
     SEPARATOR_CHAR,
     SUMMARY_LINE_WIDTH,
 )
+from ryotenkai_control.pipeline.mlflow.read.client import MlflowReadClient
+from ryotenkai_control.pipeline.mlflow.read.tree_walker import RunTreeWalker
 from ryotenkai_control.pipeline.stages import StageNames
 from ryotenkai_control.reports import ExperimentReportGenerator
 from ryotenkai_shared.config import AdaLoraConfig
@@ -275,47 +276,95 @@ class ExecutionSummaryReporter:
 
     @staticmethod
     def collect_descendant_metrics(
-        *, mlflow_manager: IMLflowManager | None, max_depth: int = 2
+        *,
+        mlflow_manager: IMLflowManager | None,
+        max_depth: int = 2,
+        run_query: MlflowReadClient | None = None,
     ) -> list[dict[str, float]]:
-        """Collect metrics from all descendant runs (BFS, ``phase_*`` children only)."""
+        """Collect metrics from descendant runs whose name starts with ``phase_``.
+
+        Phase M3.B: traversal is delegated to :class:`RunTreeWalker`
+        (which depends solely on :class:`IRunQuery`). Per-run metric
+        data is still fetched via ``mlflow_manager.client`` because
+        :class:`RunHandle` does not carry the metric bag — the walker
+        gives us the parent/child topology and we round-trip once per
+        descendant to load metrics. ``run_query`` is the DI'd
+        :class:`MlflowReadClient` used for the BFS topology; when
+        omitted, the function lazily builds one from
+        ``mlflow_manager.tracking_uri`` so legacy callers don't have to
+        thread a new argument.
+        """
         if mlflow_manager is None:
             return []
 
         try:
-            client = mlflow_manager.client
             parent_run_id = _get_run_id(mlflow_manager)
             if not parent_run_id:
                 return []
 
-            run = client.get_run(parent_run_id)
-            experiment_id = run.info.experiment_id
+            # Resolve the read client used for topology. The metric bag
+            # is still fetched via ``mlflow_manager.client`` because
+            # ``IRunQuery`` does not expose ``run.data``.
+            effective_run_query = run_query
+            if effective_run_query is None:
+                tracking_uri = getattr(mlflow_manager, "tracking_uri", "") or ""
+                if tracking_uri:
+                    try:
+                        effective_run_query = MlflowReadClient(tracking_uri=tracking_uri)
+                    except Exception as exc:  # noqa: BLE001 — fall back below
+                        logger.debug(
+                            "[METRICS] MlflowReadClient construction failed: %s",
+                            exc,
+                        )
+
+            client = mlflow_manager.client
+            if effective_run_query is None:
+                # No read client available — fall back to the legacy
+                # manager-driven BFS so collection still works for
+                # contexts where the manager carries no URI (mock-only
+                # tests, in-process fakes).
+                return _legacy_collect_descendant_metrics(
+                    client, parent_run_id, max_depth
+                )
+
+            walker = RunTreeWalker(effective_run_query)
+            try:
+                handles = walker.flat_descendants(parent_run_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[METRICS] Tree walk failed: %s", exc)
+                return _legacy_collect_descendant_metrics(
+                    client, parent_run_id, max_depth
+                )
+
+            # Record per-id depth so we can apply ``max_depth``.
+            depth_by_id: dict[str, int] = {}
+            _record_depth(walker.walk(parent_run_id), 0, depth_by_id)
 
             phase_metrics: list[dict[str, float]] = []
-            visited: set[str] = set()
-            # deque.popleft is O(1); list.pop(0) is O(n). Matters for deep run trees.
-            bfs_queue: deque[tuple[str, int]] = deque([(parent_run_id, 0)])
-
-            while bfs_queue:
-                current_id, depth = bfs_queue.popleft()
-                if current_id in visited or depth > max_depth:
+            for handle in handles:
+                if handle.run_id == parent_run_id:
+                    continue  # root is included in flat_descendants
+                if depth_by_id.get(handle.run_id, 0) > max_depth:
                     continue
-                visited.add(current_id)
-
-                children = client.search_runs(
-                    experiment_ids=[experiment_id],
-                    filter_string=f"tags.`mlflow.parentRunId` = '{current_id}'",
+                try:
+                    raw_run = client.get_run(handle.run_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "[METRICS] get_run failed for %s: %s",
+                        handle.run_id,
+                        exc,
+                    )
+                    continue
+                child_name = getattr(raw_run.info, "run_name", "") or ""
+                if not child_name.startswith("phase_"):
+                    continue
+                metrics = dict(getattr(raw_run.data, "metrics", {}) or {})
+                if not metrics:
+                    continue
+                phase_metrics.append(metrics)
+                logger.debug(
+                    f"[METRICS] Found phase run: {child_name} ({len(metrics)} metrics)"
                 )
-                for child in children:
-                    child_name = child.info.run_name or ""
-                    if child_name.startswith("phase_"):
-                        metrics = dict(child.data.metrics)
-                        if metrics:
-                            phase_metrics.append(metrics)
-                            logger.debug(
-                                f"[METRICS] Found phase run: {child_name} ({len(metrics)} metrics)"
-                            )
-                    if depth + 1 <= max_depth:
-                        bfs_queue.append((child.info.run_id, depth + 1))
             return phase_metrics
         except Exception as e:
             logger.warning(f"[METRICS] Failed to collect descendant metrics: {e}")
@@ -360,6 +409,55 @@ def _get_run_id(mlflow_manager: IMLflowManager) -> str | None:
     if isinstance(legacy_run_id, str) and legacy_run_id:
         return legacy_run_id
     return None
+
+
+def _record_depth(node: Any, depth: int, into: dict[str, int]) -> None:
+    """Stamp ``depth`` for every :class:`RunNode` reachable from ``node``."""
+    into[node.handle.run_id] = depth
+    for child in node.children:
+        _record_depth(child, depth + 1, into)
+
+
+def _legacy_collect_descendant_metrics(
+    client: Any,
+    parent_run_id: str,
+    max_depth: int,
+) -> list[dict[str, float]]:
+    """Fallback BFS path used when no :class:`MlflowReadClient` is
+    available. Mirrors the pre-M3.B behaviour bit-for-bit so callers
+    that only have an ``IMLflowManager`` with ``.client`` (and no URI)
+    keep collecting metrics.
+    """
+    from collections import deque  # noqa: PLC0415 — fallback only
+
+    run = client.get_run(parent_run_id)
+    experiment_id = run.info.experiment_id
+
+    phase_metrics: list[dict[str, float]] = []
+    visited: set[str] = set()
+    # ``deque.popleft`` is O(1); ``list.pop(0)`` is O(n).
+    bfs_queue: deque[tuple[str, int]] = deque([(parent_run_id, 0)])
+    while bfs_queue:
+        current_id, depth = bfs_queue.popleft()
+        if current_id in visited or depth > max_depth:
+            continue
+        visited.add(current_id)
+        children = client.search_runs(
+            experiment_ids=[experiment_id],
+            filter_string=f"tags.`mlflow.parentRunId` = '{current_id}'",
+        )
+        for child in children:
+            child_name = getattr(child.info, "run_name", "") or ""
+            if child_name.startswith("phase_"):
+                metrics = dict(getattr(child.data, "metrics", {}) or {})
+                if metrics:
+                    phase_metrics.append(metrics)
+                    logger.debug(
+                        f"[METRICS] Found phase run: {child_name} ({len(metrics)} metrics)"
+                    )
+            if depth + 1 <= max_depth:
+                bfs_queue.append((child.info.run_id, depth + 1))
+    return phase_metrics
 
 
 __all__ = ["ExecutionSummaryReporter"]
