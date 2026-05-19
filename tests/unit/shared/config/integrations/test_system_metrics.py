@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
-from ryotenkai_shared.config.integrations.mlflow_integration import MLflowIntegrationConfig
+from ryotenkai_shared.config.integrations.mlflow_project import MLflowProjectConfig
+from ryotenkai_shared.infrastructure.mlflow.config import MLflowConnectionConfig
 from ryotenkai_shared.config.integrations.root import IntegrationsConfig
 from ryotenkai_shared.config.integrations.system_metrics import SystemMetricsConfig
 
@@ -70,24 +70,43 @@ class TestNegative:
 
 class TestEmbedded:
     def test_mlflow_config_default_factory_creates_block(self) -> None:
-        cfg = MLflowConfig(
+        cfg = MLflowProjectConfig(
             tracking_uri="http://example.com",
             experiment_name="exp",
         )
         assert isinstance(cfg.system_metrics, SystemMetricsConfig)
         assert cfg.system_metrics.callback_enabled is True
 
-    def test_mlflow_integration_config_default_factory_creates_block(self) -> None:
-        cfg = MLflowIntegrationConfig(tracking_uri="http://example.com")
+    def test_mlflow_project_config_default_factory_creates_block(self) -> None:
+        """``system_metrics`` is a project concern — it lives on
+        :class:`MLflowProjectConfig` (project layer), not on
+        :class:`MLflowConnectionConfig` (network/reachability layer).
+        The base config only models how to reach MLflow.
+        """
+        cfg = MLflowProjectConfig(
+            tracking_uri="http://example.com",
+            experiment_name="exp",
+        )
         assert isinstance(cfg.system_metrics, SystemMetricsConfig)
         assert cfg.system_metrics.callback_enabled is True
 
-    def test_mlflow_integration_config_accepts_nested_block_in_yaml(self) -> None:
-        cfg = MLflowIntegrationConfig.model_validate({
+    def test_mlflow_project_config_accepts_nested_block_in_yaml(self) -> None:
+        cfg = MLflowProjectConfig.model_validate({
             "tracking_uri": "http://example.com",
+            "experiment_name": "exp",
             "system_metrics": {"callback_enabled": False},
         })
         assert cfg.system_metrics.callback_enabled is False
+
+    def test_mlflow_connection_config_has_no_system_metrics(self) -> None:
+        """The connection layer rejects ``system_metrics`` — it's a project-
+        scoped concern. This pin documents the layering decision.
+        """
+        with pytest.raises(ValidationError, match="extra_forbidden"):
+            MLflowConnectionConfig.model_validate({
+                "tracking_uri": "http://example.com",
+                "system_metrics": {"callback_enabled": False},
+            })
 
 
 # ---------------------------------------------------------------------------

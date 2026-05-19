@@ -27,7 +27,7 @@ from .integrations import (
     IntegrationsConfig,
     HuggingFaceConfig,
     HuggingFaceHubConfig,
-    MLflowConfig,
+    MLflowProjectConfig,
 )
 from .model import ModelConfig
 from .pipeline import PipelineConfig
@@ -77,7 +77,7 @@ __all__ = [
     "InferenceSingleNodeServeConfig",
     "LoRAConfig",
     "LoraConfig",
-    "MLflowConfig",
+    "MLflowProjectConfig",
     "ModelConfig",
     "PhaseHyperparametersConfig",
     "PipelineConfig",

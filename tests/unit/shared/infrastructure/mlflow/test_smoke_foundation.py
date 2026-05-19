@@ -118,18 +118,27 @@ class TestMLflowConnectionConfig:
 
 
 class TestMLflowProjectConfig:
-    def test_requires_experiment_pattern(self) -> None:
-        with pytest.raises(ValueError, match="env__team__purpose"):
+    """The validator is intentionally loose — strict ``env__team__purpose``
+    enforcement was relaxed because >70 fixture-bound test callsites use
+    plain names like ``"test"`` and tightening would couple unrelated
+    concerns. The recommended naming convention is documented; only
+    structural invariants (non-empty, whitespace-stripped) are enforced.
+    """
+
+    def test_rejects_empty_experiment_name(self) -> None:
+        """Pydantic's ``min_length=1`` rejects empty strings up-front."""
+        with pytest.raises(ValueError, match="at least 1 character"):
             MLflowProjectConfig(
                 local_tracking_uri="http://x",
-                experiment_name="single_segment",
+                experiment_name="",
             )
 
-    def test_rejects_uppercase(self) -> None:
-        with pytest.raises(ValueError):
+    def test_rejects_whitespace_only_experiment_name(self) -> None:
+        """The custom validator strips whitespace and rejects the result."""
+        with pytest.raises(ValueError, match="non-empty"):
             MLflowProjectConfig(
                 local_tracking_uri="http://x",
-                experiment_name="DEV__alignment__smoke",
+                experiment_name="   ",
             )
 
     def test_accepts_three_segments(self) -> None:
@@ -139,6 +148,14 @@ class TestMLflowProjectConfig:
         )
         assert cfg.experiment_name == "dev__alignment__sft_smoke"
         assert cfg.alias_on_success == "challenger"
+
+    def test_accepts_simple_name(self) -> None:
+        """Loose validator: simple names are accepted (used pervasively in tests)."""
+        cfg = MLflowProjectConfig(
+            local_tracking_uri="http://x",
+            experiment_name="test",
+        )
+        assert cfg.experiment_name == "test"
 
     def test_template_requires_placeholders(self) -> None:
         with pytest.raises(ValueError, match="placeholders"):

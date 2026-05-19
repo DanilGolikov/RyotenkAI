@@ -1,26 +1,18 @@
-"""MLflow infrastructure layer — centralized HTTP interaction + protocol."""
+"""MLflow infrastructure layer — narrow Protocols + transport.
 
-from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
-from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway, MLflowGateway
-from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
-from ryotenkai_shared.infrastructure.mlflow.registry import (
-    MlflowModelRegistry,
-    MlflowModelVersion,
-)
-from ryotenkai_shared.infrastructure.mlflow.uri_resolver import (
-    MLflowRuntimeRole,
-    ResolvedMLflowUris,
-    resolve_mlflow_uris,
-)
+Phase F retired the wide ``IMLflowManager`` / ``MLflowGateway`` /
+``MLflowEnvironment`` / ``resolve_mlflow_uris`` surface. The
+write-path is now expressed via narrow Protocols (see ``protocols``)
+and concrete implementations (``transport``, ``registry``,
+``journal_uploader``, ``prompt_registry``).
 
-__all__ = [
-    "IMLflowGateway",
-    "IMLflowManager",
-    "MLflowEnvironment",
-    "MLflowGateway",
-    "MLflowModelRegistry",
-    "MLflowRuntimeRole",
-    "MlflowModelVersion",
-    "ResolvedMLflowUris",
-    "resolve_mlflow_uris",
-]
+Module names re-exported by this package are deliberately kept thin
+to avoid pulling the logger transitively (the logger imports
+``ryotenkai_shared.config`` which imports
+``mlflow_project`` which in turn imports
+``infrastructure.mlflow.config`` -- a re-export loop here would cause
+a circular import). Callers should import concrete classes from their
+own module paths.
+"""
+
+__all__: list[str] = []

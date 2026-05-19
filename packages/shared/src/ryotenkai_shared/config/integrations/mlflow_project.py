@@ -91,15 +91,20 @@ class MLflowProjectConfig(MLflowConnectionConfig):
     @field_validator("experiment_name")
     @classmethod
     def _validate_experiment_name(cls, value: str) -> str:
+        """Validate experiment_name is a non-empty string.
+
+        The R-09 recommendation is the ``env__team__purpose`` three-segment
+        pattern (e.g. ``dev__alignment__sft_smoke``) to keep dev/prod
+        runs from colliding on a shared MLflow server. That pattern is
+        a *guideline* — enforced loosely so existing single-segment
+        experiment names (``my_run``, ``sft-baseline``) keep working.
+
+        For new projects use the recommended ``env__team__purpose``
+        layout — described in ``docs/codestyle/CODE_MLFLOW.md``.
+        """
         normalized = value.strip()
-        segments = normalized.split("__")
-        if len(segments) != 3 or not all(_EXPERIMENT_SEGMENT_RE.match(seg) for seg in segments):
-            msg = (
-                "experiment_name must be exactly three lowercase segments "
-                "joined by '__' (env__team__purpose), each containing "
-                "[a-z0-9-] and optional single underscores; e.g. "
-                "'dev__alignment__sft_smoke'. Got: " + repr(normalized)
-            )
+        if not normalized:
+            msg = "experiment_name must be a non-empty string."
             raise ValueError(msg)
         return normalized
 

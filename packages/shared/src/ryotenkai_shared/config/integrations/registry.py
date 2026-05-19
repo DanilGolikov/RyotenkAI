@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ryotenkai_shared.config.integrations.huggingface_integration import HuggingFaceIntegrationConfig
-from ryotenkai_shared.config.integrations.mlflow_integration import MLflowIntegrationConfig
+from ryotenkai_shared.infrastructure.mlflow.config import MLflowConnectionConfig
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -42,8 +42,8 @@ INTEGRATION_TYPES: dict[str, IntegrationType] = {
     INTEGRATION_TYPE_MLFLOW: IntegrationType(
         id=INTEGRATION_TYPE_MLFLOW,
         label="MLflow tracking",
-        schema=MLflowIntegrationConfig,
-        schema_name=MLflowIntegrationConfig.__name__,
+        schema=MLflowConnectionConfig,
+        schema_name=MLflowConnectionConfig.__name__,
         requires_token=False,  # token optional for unauthenticated servers
     ),
     INTEGRATION_TYPE_HUGGINGFACE: IntegrationType(

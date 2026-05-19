@@ -1,16 +1,14 @@
 from .root import IntegrationsConfig
 from .huggingface import HuggingFaceConfig, HuggingFaceHubConfig
 from .huggingface_integration import HuggingFaceIntegrationConfig
-from .mlflow import MLflowConfig
-from .mlflow_integration import MLflowIntegrationConfig
+from .mlflow_project import MLflowProjectConfig
 from .system_metrics import SystemMetricsConfig
 
 __all__ = [
-    "IntegrationsConfig",
     "HuggingFaceConfig",
     "HuggingFaceHubConfig",
     "HuggingFaceIntegrationConfig",
-    "MLflowConfig",
-    "MLflowIntegrationConfig",
+    "IntegrationsConfig",
+    "MLflowProjectConfig",
     "SystemMetricsConfig",
 ]

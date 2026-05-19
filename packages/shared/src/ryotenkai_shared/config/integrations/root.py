@@ -17,7 +17,7 @@ from pydantic import Field, model_validator
 
 from ..base import StrictBaseModel
 from .huggingface import HuggingFaceHubConfig  # noqa: TC001  — required at runtime for Pydantic
-from .mlflow import MLflowConfig  # noqa: TC001  — required at runtime for Pydantic
+from .mlflow_project import MLflowProjectConfig  # noqa: TC001  — required at runtime for Pydantic
 
 # Fields that used to live INSIDE the nested
 # ``integrations.mlflow.system_metrics:`` block but were removed
@@ -53,7 +53,7 @@ class IntegrationsConfig(StrictBaseModel):
     stages read ``cfg.integrations.mlflow.tracking_uri`` etc. directly.
     """
 
-    mlflow: MLflowConfig | None = Field(None)
+    mlflow: MLflowProjectConfig | None = Field(None)
     huggingface: HuggingFaceHubConfig | None = Field(None)
 
     @model_validator(mode="before")
