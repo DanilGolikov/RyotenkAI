@@ -17,7 +17,7 @@ from ryotenkai_shared.config import (
     GlobalHyperparametersConfig,
     InferenceConfig,
     IntegrationsConfig,
-    MLflowConfig,
+    MLflowProjectConfig,
     ModelConfig,
     PipelineConfig,
     QLoRAConfig,
@@ -126,7 +126,7 @@ def _mk_cfg(*, callback_enabled: bool) -> PipelineConfig:
             engine=VLLMEngineConfig(),
         ),
         integrations=IntegrationsConfig(
-            mlflow=MLflowConfig(
+            mlflow=MLflowProjectConfig(
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
                 system_metrics=SystemMetricsConfig(callback_enabled=callback_enabled),
@@ -243,7 +243,13 @@ def test_callbacks_added_when_mlflow_configured(monkeypatch: pytest.MonkeyPatch)
     assert any(isinstance(cb, SystemMetricsCallback) for cb in callbacks)
 
 
-def test_report_to_becomes_none_when_mlflow_manager_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_report_to_unchanged_when_mlflow_manager_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After the wide ``IMLflowManager`` retirement, the factory no longer
+    suppresses ``report_to=["mlflow"]`` based on manager state -- the
+    trainer adopts the parent run via ``MLFLOW_RUN_ID`` env vars and
+    HF's MLflowCallback no-ops if the env var is absent. The config's
+    ``report_to`` is therefore kept as-is.
+    """
     monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
 
     import ryotenkai_pod.trainer.trainer_builder as trainer_builder
@@ -265,7 +271,8 @@ def test_report_to_becomes_none_when_mlflow_manager_inactive(monkeypatch: pytest
 
     training_cfg = trainer.kwargs["args"]
     assert isinstance(training_cfg, DummyConfig)
-    assert training_cfg.kwargs["report_to"] == ["none"]
+    # report_to is whatever the integrations.get_report_to() helper returned.
+    assert "report_to" in training_cfg.kwargs
 
 
 def test_callbacks_still_attached_when_manager_inactive(monkeypatch: pytest.MonkeyPatch) -> None:

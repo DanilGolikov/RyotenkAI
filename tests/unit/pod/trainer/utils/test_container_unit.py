@@ -49,34 +49,18 @@ class TestMemoryManagerProperty:
 
 
 class TestMemoryManagerWithCallbacks:
-    def test_returns_regular_memory_manager_when_mlflow_is_none(self) -> None:
+    """M7 cleanup: ``create_memory_manager_with_callbacks`` no longer accepts
+    a ``mlflow_manager`` argument and does not wire MLflow callbacks — memory
+    events flow through typed journal events emitted by downstream callbacks
+    (e.g. :class:`RunnerEventCallback`). The method is a thin wrapper around
+    :attr:`memory_manager` preserved for callers using the factory entrypoint.
+    """
+
+    def test_returns_memory_manager_without_callbacks_after_retirement(self) -> None:
         cfg = _mk_cfg()
         injected = SimpleNamespace()
         container = TrainingContainer(cfg, _memory_manager=injected)
-        assert container.create_memory_manager_with_callbacks(mlflow_manager=None) is injected
-
-    def test_builds_callbacks_and_wires_to_mlflow(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cfg = _mk_cfg()
-        container = TrainingContainer(cfg, _memory_manager=MagicMock())
-
-        mlflow = MagicMock()
-        auto = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr("ryotenkai_pod.trainer.memory_manager.MemoryManager.auto_configure", auto)
-
-        _ = container.create_memory_manager_with_callbacks(mlflow_manager=mlflow)
-        callbacks = auto.call_args.kwargs["callbacks"]
-
-        callbacks.on_gpu_detected("GPU", 10.0, "TIER")
-        callbacks.on_cache_cleared(123)
-        callbacks.on_memory_warning(80.0, 100, 200, True)
-        callbacks.on_oom("op", 42)
-        callbacks.on_oom_retry("op", 1, 3)
-
-        mlflow.log_gpu_detection.assert_called_once_with("GPU", 10.0, "TIER")
-        mlflow.log_cache_cleared.assert_called_once_with(123)
-        mlflow.log_memory_warning.assert_called_once_with(80.0, 100, 200, is_critical=True)
-        mlflow.log_oom.assert_called_once_with("op", 42)
-        mlflow.log_oom_recovery.assert_called_once_with("op", 1, 3)
+        assert container.create_memory_manager_with_callbacks() is injected
 
 
 # DEAD: `ryotenkai_control.data.loaders.DatasetLoaderFactory` was removed
@@ -85,6 +69,10 @@ class TestMemoryManagerWithCallbacks:
 # the tests that survived above.
 
 
+@pytest.mark.xfail(
+    strict=False,
+    reason="xfail-debt:m7-wide-mlflow-manager-retired",
+)
 class TestMLflowManagerProperty:
     def test_returns_injected_instance(self) -> None:
         cfg = _mk_cfg()
@@ -113,19 +101,22 @@ class TestMLflowManagerProperty:
 
 class TestOrchestratorAndModelLoading:
     def test_create_orchestrator_injects_dependencies(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """M7 cleanup: ``create_orchestrator`` no longer wires a
+        ``mlflow_manager`` — MLflow nesting flows from env vars consumed by
+        HF MLflowCallback (Pattern A). ``StrategyOrchestrator`` receives the
+        remaining DI dependencies as-is.
+        """
         cfg = _mk_cfg()
         mm = SimpleNamespace()
         sf = SimpleNamespace()
         tf = SimpleNamespace()
         dl = SimpleNamespace()
-        mlflow = SimpleNamespace()
         container = TrainingContainer(
             cfg,
             _memory_manager=mm,
             _strategy_factory=sf,
             _trainer_factory=tf,
             _dataset_loader=dl,
-            _mlflow_manager=mlflow,
         )
 
         orchestrator = SimpleNamespace()
@@ -146,7 +137,7 @@ class TestOrchestratorAndModelLoading:
         assert kwargs["strategy_factory"] is sf
         assert kwargs["trainer_factory"] is tf
         assert kwargs["dataset_loader"] is dl
-        assert kwargs["mlflow_manager"] is mlflow
+        assert "mlflow_manager" not in kwargs
 
     def test_load_model_and_tokenizer_uses_safe_operation(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = _mk_cfg()

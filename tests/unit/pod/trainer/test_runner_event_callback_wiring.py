@@ -129,117 +129,89 @@ class TestFactoryWiring:
         )
 
 
-class TestPhase9ACancellationCallbackWiring:
-    """Phase 9.A regression: CancellationCallback must be inserted at
-    index 0 of the callback list inside the same env-gated block."""
+class TestTerminalCallbackWiring:
+    """Post-cleanup regression: a single :class:`TerminalCallback`
+    parametric on ``reason`` handles both the cancellation
+    (``reason="cancel"``) and natural-completion (``reason="complete"``)
+    paths. The cancel-reason callback must be inserted at index 0 of
+    the callback list inside the same env-gated block."""
 
-    def test_factory_imports_cancellation_callback(self) -> None:
+    def test_factory_imports_terminal_callback(self) -> None:
         src = _factory_source()
-        assert "CancellationCallback" in src, (
-            "TrainerFactory must import CancellationCallback "
-            "(Phase 9.A wiring)."
+        assert "TerminalCallback" in src, (
+            "TrainerFactory must import TerminalCallback "
+            "(post-cleanup unified terminal-state wiring)."
         )
 
-    def test_factory_inserts_cancellation_callback_at_index_zero(self) -> None:
-        """Insert at idx 0, not append — must run BEFORE HF Trainer's
+    def test_factory_inserts_terminal_callback_at_index_zero(self) -> None:
+        """Insert at idx 0, not append -- must run BEFORE HF Trainer's
         auto-registered MLflow callback. Order is the contract: HF
         MLflow callback owns ``end_run()`` on ``on_train_end``; our
         callback flips ``control.should_save+should_training_stop``
         on ``on_step_end`` so HF observes it before it decides whether
         to keep stepping."""
         src = _factory_source()
-        # Match either the 9.A signature (no kwargs) or the 9.B
-        # signature (passes mlflow_manager). The pin is "insert(0,
-        # CancellationCallback(...))" with no positional args before
-        # the kwarg. ``CancellationCallback(`` immediately after
-        # ``insert(0,`` and ``)`` closing within ~120 chars is enough.
         assert "callbacks.insert(" in src, (
-            "TrainerFactory must insert CancellationCallback at index 0 "
-            "(BEFORE HF MLflow callback). Phase 9.1.E ordering decision."
+            "TrainerFactory must insert TerminalCallback at index 0 "
+            "(BEFORE HF MLflow callback)."
         )
-        # Find the actual insert call and confirm the index is 0.
         insert_idx = src.find("callbacks.insert(")
         assert insert_idx >= 0
-        # Read ahead and ensure the first arg is exactly ``0``.
-        snippet = src[insert_idx:insert_idx + 120]
+        snippet = src[insert_idx:insert_idx + 250]
         assert "callbacks.insert(\n                0," in snippet or \
                "callbacks.insert(0," in snippet, (
             "callbacks.insert(...) must use index 0 as the first arg; "
             f"snippet was: {snippet!r}"
         )
-        assert "CancellationCallback(" in snippet, (
-            "insert(0, ...) must construct CancellationCallback"
+        assert "TerminalCallback(" in snippet, (
+            "insert(0, ...) must construct TerminalCallback"
+        )
+        assert 'reason="cancel"' in snippet, (
+            "first TerminalCallback must use reason=\"cancel\""
         )
 
-    def test_cancellation_wire_is_env_gated(self) -> None:
-        """Same env gate as RunnerEventCallback — CancellationCallback
-        only runs inside the in-pod runner where stop signals are
-        meaningful. Local-mode trainings (no runner attached) skip
-        both callbacks."""
+    def test_terminal_wire_is_env_gated(self) -> None:
         src = _factory_source()
         env_check = src.find("environ.get(RUNNER_URL_ENV)")
-        cancel_insert = src.find("callbacks.insert(")
+        terminal_insert = src.find("callbacks.insert(")
         assert env_check >= 0, "missing env-driven activation gate"
-        assert cancel_insert >= 0, "missing CancellationCallback insert"
-        # Insert MUST come AFTER the env check (inside the conditional).
-        assert cancel_insert > env_check, (
-            "CancellationCallback insert must be inside the env check"
+        assert terminal_insert >= 0, "missing TerminalCallback insert"
+        assert terminal_insert > env_check, (
+            "TerminalCallback insert must be inside the env check"
         )
-        # Wider window than the RunnerEventCallback test because
-        # Phase 9.A/B/C added explanatory comments between the env
-        # check and the cancel-insert. ~4000 chars still tolerates a
-        # few more comment blocks before becoming a real problem.
-        assert (cancel_insert - env_check) < 4000, (
-            "env check and CancellationCallback insert are too far "
-            "apart — likely a refactor broke the conditional grouping"
+        assert (terminal_insert - env_check) < 4000, (
+            "env check and TerminalCallback insert are too far apart"
         )
 
-    def test_cancellation_wire_passes_event_publisher_phase_9c(self) -> None:
-        """Phase 9.C: factory must wire ``event_publisher=`` so the
-        callback can emit ``cancellation_finalized`` via the same
-        runner publish channel as RunnerEventCallback.
-
-        Pin the kwarg name so a refactor that drops the wire is
-        caught LOUDLY. Without ``event_publisher`` injected, Mac-side
-        operator dashboards never see the trainer-side flush
-        outcome → reconciliation degrades silently."""
+    def test_terminal_wire_passes_event_publisher(self) -> None:
+        """Factory must wire ``event_publisher=`` so the callback can
+        emit ``cancellation_finalized`` / ``completion_finalized`` via
+        the same runner publish channel as RunnerEventCallback."""
         src = _factory_source()
-        # Factory builds a closure ``_cancellation_event_publisher``
-        # that calls ``runner_event_callback._publish(..., flush_now=True)``.
-        # Both bits are part of the contract.
         assert "event_publisher" in src, (
-            "TrainerFactory must pass event_publisher=... to "
-            "CancellationCallback (Phase 9.C wiring)."
+            "TrainerFactory must pass event_publisher=... to TerminalCallback"
         )
         assert "flush_now=True" in src, (
-            "Cancellation publisher must call _publish with "
-            "flush_now=True so cancellation_finalized lands "
-            "immediately, not buffered"
+            "Terminal event publisher must call _publish with flush_now=True"
         )
 
-    def test_cancellation_wire_after_runner_event_callback(self) -> None:
-        """Both callbacks live in the same env-gated block. The order
-        in source (Runner first, then Cancellation) is intentional:
-
-        - ``RunnerEventCallback.append`` happens at the existing
-          end-of-list position so its event hooks fire AFTER HF
-          completes a step.
-        - ``CancellationCallback`` is inserted at index 0 so its
-          on_step_end hook fires BEFORE the HF MLflow callback
-          (which auto-registers at the end of the list).
-
-        If a future refactor swaps the order in source, the
-        runtime semantic changes. Pin both spots."""
+    def test_terminal_wire_after_runner_event_callback(self) -> None:
         src = _factory_source()
         runner_append = src.find("callbacks.append(RunnerEventCallback())")
         if runner_append < 0:
             runner_append = src.find("callbacks.append(runner_event_callback)")
-        cancel_insert = src.find("callbacks.insert(")
+        terminal_insert = src.find("callbacks.insert(")
         assert runner_append >= 0, "missing RunnerEventCallback append"
-        assert runner_append < cancel_insert, (
-            "RunnerEventCallback.append must come BEFORE "
-            "callbacks.insert(0, CancellationCallback(...)) in source order"
+        assert runner_append < terminal_insert, (
+            "RunnerEventCallback.append must come BEFORE the TerminalCallback inserts"
         )
+
+    def test_factory_inserts_both_cancel_and_complete_terminal_callbacks(self) -> None:
+        """Two TerminalCallback inserts -- one with reason="cancel" at
+        index 0 and one with reason="complete" at index 1."""
+        src = _factory_source()
+        assert 'reason="cancel"' in src
+        assert 'reason="complete"' in src
 
 
 @pytest.mark.skipif(

@@ -95,15 +95,24 @@ class TestRunTrainingFlow:
     """Pattern A flow: trainer never opens its own MLflow run.
 
     Tests focus on the control-flow contract that ``run_training``
-    plumbs ``mlflow_manager=None`` through container hooks, that
-    Pattern A env is validated when present, and that typed
-    failure events are emitted exactly once.
+    invokes container hooks without any ``mlflow_manager`` kwarg
+    (M7 cleanup; wide ``IMLflowManager`` retired), that Pattern A
+    env is validated when present, and that typed failure events
+    are emitted exactly once.
     """
 
-    def test_run_training_success_passes_none_mlflow_manager(
+    def test_run_training_success_invokes_container_hooks_without_mlflow_manager(
         self, monkeypatch, tmp_path,
     ):
-        """Container hooks receive ``mlflow_manager=None`` under Pattern A."""
+        """Container hooks receive no ``mlflow_manager`` kwarg under Pattern A.
+
+        M7 cleanup: the wide ``IMLflowManager`` plumbing is fully retired.
+        ``create_memory_manager_with_callbacks`` and ``create_orchestrator``
+        no longer accept ``mlflow_manager`` at all — MLflow flows from env
+        vars consumed by HF MLflowCallback (and the per-phase
+        ``HFMlflowWiring.configure_training_args`` hook inside
+        ``TrainerFactory.create``).
+        """
         import importlib
 
         rt = importlib.import_module("ryotenkai_pod.trainer.run_training")
@@ -158,11 +167,14 @@ class TestRunTrainingFlow:
         )
 
         assert out.name == "checkpoint-final"
-        # Pattern A: memory manager receives no mlflow manager.
-        container.create_memory_manager_with_callbacks.assert_called_once_with(None)
-        # Orchestrator receives no mlflow manager.
+        # Pattern A / M7: memory manager + orchestrator are constructed
+        # without any ``mlflow_manager`` argument. HF MLflowCallback owns
+        # the run; ``HFMlflowWiring.configure_training_args`` (invoked
+        # inside ``TrainerFactory.create``) sets ``report_to=["mlflow"]``
+        # per-phase from env vars.
+        container.create_memory_manager_with_callbacks.assert_called_once_with()
         kwargs = container.create_orchestrator.call_args.kwargs
-        assert kwargs["mlflow_manager"] is None
+        assert "mlflow_manager" not in kwargs
 
     def test_run_training_failure_emits_typed_training_failed_event(
         self, monkeypatch, tmp_path,

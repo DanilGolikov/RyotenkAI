@@ -26,7 +26,6 @@ def _mk_cfg(*, strategies: list[Any] | None = None) -> MagicMock:
 def _mk_orchestrator(
     *,
     cfg: MagicMock,
-    mlflow_manager: Any | None = None,
     shutdown_handler: Any | None = None,
     graceful_shutdown: bool = False,
 ) -> StrategyOrchestrator:
@@ -38,37 +37,23 @@ def _mk_orchestrator(
         dataset_loader=MagicMock(name="dl"),
         strategy_factory=MagicMock(name="sf"),
         trainer_factory=MagicMock(name="tf"),
-        mlflow_manager=mlflow_manager,
         shutdown_handler=shutdown_handler,
         graceful_shutdown=graceful_shutdown,
     )
 
 
 class TestDataBufferCallbacks:
-    def test_callbacks_are_none_without_mlflow(self) -> None:
-        orch = _mk_orchestrator(cfg=_mk_cfg(strategies=[MagicMock()]), mlflow_manager=None)
+    def test_callbacks_are_none_after_wide_manager_retirement(self) -> None:
+        """M7 cleanup: wide ``IMLflowManager`` is fully retired.
+
+        :class:`StrategyOrchestrator` no longer accepts a ``mlflow_manager``
+        kwarg; :meth:`_create_data_buffer_callbacks` unconditionally returns
+        ``None`` — the per-phase signal is emitted via
+        :class:`TrainingStartedEvent` / :class:`TrainingCompletedEvent` on the
+        typed journal, and HF MLflowCallback handles native MLflow.
+        """
+        orch = _mk_orchestrator(cfg=_mk_cfg(strategies=[MagicMock()]))
         assert orch._create_data_buffer_callbacks() is None
-
-    def test_callbacks_call_mlflow_manager(self) -> None:
-        mlflow = MagicMock()
-        orch = _mk_orchestrator(cfg=_mk_cfg(strategies=[MagicMock()]), mlflow_manager=mlflow)
-        cbs = orch._create_data_buffer_callbacks()
-        assert cbs is not None
-
-        cbs.on_pipeline_initialized("rid", 2, ["sft", "dpo"])
-        mlflow.log_pipeline_initialized.assert_called_once_with("rid", 2, ["sft", "dpo"])
-
-        cbs.on_state_saved("rid", "/state.json")
-        mlflow.log_state_saved.assert_called_once_with("rid", "/state.json")
-
-        # Phase 7: per-phase ``log_event_start`` / ``log_event_complete``
-        # were removed — the callbacks are now no-ops. They still must
-        # accept the call and not raise.
-        cbs.on_phase_started(1, "sft")
-        cbs.on_phase_completed(1, "sft", "completed")
-
-        cbs.on_checkpoint_cleanup(3, 100)
-        mlflow.log_checkpoint_cleanup.assert_called_once_with(3, 100)
 
 
 class TestRunChain:

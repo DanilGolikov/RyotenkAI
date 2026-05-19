@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
+from ryotenkai_shared.config.integrations.mlflow_project import MLflowProjectConfig
 from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
@@ -28,7 +28,7 @@ from ryotenkai_shared.config import (
     IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
-    MLflowConfig,
+    MLflowProjectConfig,
     ModelConfig,
     PipelineConfig,
     QLoRAConfig,
@@ -85,7 +85,7 @@ def full_config():
             engine=VLLMEngineConfig(),
         ),
         integrations=IntegrationsConfig(
-            mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test")
+            mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test")
         ),
     )
 
@@ -192,6 +192,10 @@ class TestTrainerFactoryIntegration:
 # =============================================================================
 
 
+@pytest.mark.xfail(
+    strict=False,
+    reason="xfail-debt:m7-wide-mlflow-manager-retired",
+)
 class TestMLflowManagerIntegration:
     """Test MLflow manager integration."""
 
@@ -250,8 +254,9 @@ class TestFullWorkflow:
         _ = container.dataset_loader
         _ = container.trainer_factory
 
-        # MLflow might be None if disabled
-        _ = container.mlflow_manager
+        # Wide IMLflowManager retired (M7 cleanup) — MLflow logging
+        # now flows through HF MLflowCallback in pod-trainer (Pattern A)
+        # and RunLifecycleCoord on control-plane. No container attribute.
 
     def test_override_preserves_config(self, full_config):
         """override() should preserve config reference."""

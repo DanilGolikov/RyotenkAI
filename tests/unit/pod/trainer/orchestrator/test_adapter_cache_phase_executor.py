@@ -687,7 +687,6 @@ class TestChainRunnerCascade:
 
         return ChainRunner(
             phase_executor=phase_executor,
-            mlflow_manager=None,
         )
 
     def _mk_strategies(self, n: int = 2) -> list[Any]:

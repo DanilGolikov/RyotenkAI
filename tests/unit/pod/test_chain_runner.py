@@ -541,24 +541,20 @@ class TestChainRunnerRaiseContract:
         assert out is initial
         executor.execute.assert_not_called()
 
-    def test_invariant_mlflow_failed_tag_logged_before_raise(self):
-        """The MLflow status tag is set before propagating, so external
-        observers see "failed" rather than just the missing run."""
+    def test_invariant_failure_propagates_after_wide_manager_retirement(self):
+        """After the wide ``IMLflowManager`` retirement, the chain runner no
+        longer set the ``status=failed`` MLflow tag from the trainer; the
+        signal flows via :class:`TrainingFailedEvent` on the typed journal.
+        We pin the propagation contract: ``TrainingFailedError`` from the
+        executor surfaces verbatim to the caller.
+        """
         from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
         executor = MagicMock()
         executor.execute.side_effect = TrainingFailedError(detail="x")
-        mlflow = MagicMock()
-        mlflow.is_active = True
         with pytest.raises(TrainingFailedError):
-            ChainRunner(executor, mlflow_manager=mlflow).run(
+            ChainRunner(executor).run(
                 [make_strategy("sft")], MagicMock(), self._buf(1),
             )
-        # Failed status should be tagged via set_tags.
-        set_tags_calls = [c for c in mlflow.set_tags.call_args_list]
-        assert any(
-            "status" in c.args[0] and c.args[0]["status"] == "failed"
-            for c in set_tags_calls
-        )
 
     def test_dependency_error_oom_propagates(self):
         from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
