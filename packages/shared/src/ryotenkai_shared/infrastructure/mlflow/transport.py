@@ -335,10 +335,26 @@ class MlflowTransport:
         )
 
     def _ensure_experiment(self, experiment: str) -> str:
-        """Resolve experiment name → id; create on miss."""
+        """Resolve experiment name → id; create on miss, restore if soft-deleted.
+
+        MLflow soft-deletes experiments: ``get_experiment_by_name`` returns
+        both ``active`` and ``deleted`` lifecycle stages. Creating a run
+        under a ``deleted`` experiment fails with
+        ``INVALID_PARAMETER_VALUE: The experiment X must be in the
+        'active' state``. Restore in place so the operator does not have
+        to manually un-delete after touching the MLflow UI.
+        """
         client = self.client
         existing = client.get_experiment_by_name(experiment)
         if existing is not None:
+            if existing.lifecycle_stage == "deleted":
+                logger.warning(
+                    "[MLFLOW_TRANSPORT] experiment=%s (id=%s) was soft-deleted; "
+                    "restoring before opening a new run.",
+                    experiment,
+                    existing.experiment_id,
+                )
+                client.restore_experiment(existing.experiment_id)
             return existing.experiment_id
         return client.create_experiment(experiment)
 

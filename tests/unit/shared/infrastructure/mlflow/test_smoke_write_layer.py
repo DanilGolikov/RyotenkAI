@@ -245,3 +245,85 @@ def test_journal_uploader_skips_missing_file(
     # Should NOT raise even though the file is missing — by contract
     # JournalUploader never raises (manifest carries the failure flag).
     uploader.upload("run-1", tmp_path / "does-not-exist.jsonl", "abc")
+
+
+# ---------------------------------------------------------------------------
+# _ensure_experiment: handle MLflow's soft-delete lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_experiment_restores_soft_deleted(stub_mlflow: MagicMock) -> None:
+    """A soft-deleted experiment must be restored, not blindly reused.
+
+    MLflow's ``get_experiment_by_name`` returns experiments in both
+    ``active`` and ``deleted`` lifecycle stages. Creating a run under a
+    ``deleted`` experiment fails with
+    ``INVALID_PARAMETER_VALUE: The experiment X must be in the 'active'
+    state``. The transport must transparently restore in-place so the
+    operator does not have to manually un-delete after touching the UI.
+    """
+    from ryotenkai_shared.infrastructure.mlflow.auth import _AuthNone
+    from ryotenkai_shared.infrastructure.mlflow.transport import MlflowTransport
+    from ryotenkai_shared.infrastructure.mlflow.uri import RuntimeUri
+
+    deleted_exp = MagicMock()
+    deleted_exp.experiment_id = "17"
+    deleted_exp.lifecycle_stage = "deleted"
+
+    client = MagicMock()
+    client.get_experiment_by_name.return_value = deleted_exp
+
+    uri = RuntimeUri(uri="http://localhost:5000", role="control_plane")
+    transport = MlflowTransport(uri, _AuthNone())
+    transport._client = client  # bypass lazy initialiser
+
+    exp_id = transport._ensure_experiment("helixql-nl2hql")
+
+    assert exp_id == "17"
+    client.restore_experiment.assert_called_once_with("17")
+    client.create_experiment.assert_not_called()
+
+
+def test_ensure_experiment_returns_active_unchanged(stub_mlflow: MagicMock) -> None:
+    """Active experiments are returned as-is — no restore, no create."""
+    from ryotenkai_shared.infrastructure.mlflow.auth import _AuthNone
+    from ryotenkai_shared.infrastructure.mlflow.transport import MlflowTransport
+    from ryotenkai_shared.infrastructure.mlflow.uri import RuntimeUri
+
+    active_exp = MagicMock()
+    active_exp.experiment_id = "42"
+    active_exp.lifecycle_stage = "active"
+
+    client = MagicMock()
+    client.get_experiment_by_name.return_value = active_exp
+
+    uri = RuntimeUri(uri="http://localhost:5000", role="control_plane")
+    transport = MlflowTransport(uri, _AuthNone())
+    transport._client = client
+
+    exp_id = transport._ensure_experiment("helixql-nl2hql")
+
+    assert exp_id == "42"
+    client.restore_experiment.assert_not_called()
+    client.create_experiment.assert_not_called()
+
+
+def test_ensure_experiment_creates_on_miss(stub_mlflow: MagicMock) -> None:
+    """When the name is unknown, the experiment is created fresh."""
+    from ryotenkai_shared.infrastructure.mlflow.auth import _AuthNone
+    from ryotenkai_shared.infrastructure.mlflow.transport import MlflowTransport
+    from ryotenkai_shared.infrastructure.mlflow.uri import RuntimeUri
+
+    client = MagicMock()
+    client.get_experiment_by_name.return_value = None
+    client.create_experiment.return_value = "99"
+
+    uri = RuntimeUri(uri="http://localhost:5000", role="control_plane")
+    transport = MlflowTransport(uri, _AuthNone())
+    transport._client = client
+
+    exp_id = transport._ensure_experiment("new-exp")
+
+    assert exp_id == "99"
+    client.create_experiment.assert_called_once_with("new-exp")
+    client.restore_experiment.assert_not_called()
