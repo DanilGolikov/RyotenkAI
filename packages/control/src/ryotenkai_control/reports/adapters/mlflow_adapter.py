@@ -63,8 +63,6 @@ STAGE_ARTIFACT_FILES: tuple[str, ...] = (
 if TYPE_CHECKING:
     from mlflow.entities import Run
 
-    from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway
-
 logger = get_logger(__name__)
 
 # =============================================================================
@@ -138,34 +136,27 @@ class MLflowAdapter(IExperimentDataProvider):
         self,
         tracking_uri: str | None = None,
         *,
-        gateway: IMLflowGateway | None = None,
         run_query: MlflowReadClient | None = None,
     ):
         """Initialize the adapter.
 
-        Phase M3.B: ``run_query`` is the preferred constructor argument.
-        When supplied, no global ``mlflow.set_tracking_uri`` mutation is
-        performed — the read client owns the URI for the lifetime of
-        this adapter. The legacy ``tracking_uri`` / ``gateway`` kwargs
-        are kept for backward compat and internally route through
-        :class:`MlflowReadClient` so the lint forbidding ad-hoc
-        ``MlflowClient(...)`` constructions still holds.
+        :param tracking_uri: MLflow tracking URI. Used to construct an
+            :class:`MlflowReadClient` when ``run_query`` is not provided.
+        :param run_query: Pre-built :class:`MlflowReadClient`. Preferred
+            entry point -- when supplied, no global
+            ``mlflow.set_tracking_uri`` mutation is performed.
         """
         if run_query is not None:
             self._run_query = run_query
             self._tracking_uri = run_query.tracking_uri
             self._client = run_query.underlying_client
-        elif gateway is not None:
-            self._tracking_uri = gateway.uri
-            self._run_query = MlflowReadClient(tracking_uri=gateway.uri)
-            self._client = self._run_query.underlying_client
-        elif tracking_uri is not None:
+        elif tracking_uri:
             self._tracking_uri = tracking_uri
             self._run_query = MlflowReadClient(tracking_uri=tracking_uri)
             self._client = self._run_query.underlying_client
         else:
             raise ValueError(
-                "One of run_query, gateway, or tracking_uri must be provided"
+                "One of run_query or tracking_uri must be provided"
             )
 
     def load(self, run_id: str) -> ExperimentData:

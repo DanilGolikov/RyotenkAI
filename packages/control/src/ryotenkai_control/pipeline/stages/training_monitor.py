@@ -446,8 +446,9 @@ class TrainingMonitor(PipelineStage):
             # Phase 9.C / Phase 11.A — Mac-side reconciliation for both
             # terminal markers:
             #
-            # * ``cancelled.marker`` (Phase 9.C) — written when the
-            #   CancellationCallback's 5-second flush deadline fires.
+            # * ``cancelled.marker`` -- written when the
+            #   TerminalCallback (reason="cancel")'s 5-second flush
+            #   deadline fires.
             #   The runner SIGKILLed the trainer before HF MLflow
             #   callback could close the run; MLflow shows RUNNING.
             #   Reconcile to ``KILLED``.

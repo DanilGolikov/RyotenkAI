@@ -1010,13 +1010,33 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         the chat script on the remote machine does not need MLflow access.
         system_prompt_source carries audit metadata (origin type + name/path + version).
         """
-        from ryotenkai_shared.infrastructure.mlflow.system_prompt import SystemPromptLoader
+        from ryotenkai_shared.inference.prompts import SystemPromptLoader
+        from ryotenkai_shared.infrastructure.mlflow.prompt_registry import (
+            MlflowPromptRegistry,
+        )
 
         llm_cfg = self._provider_cfg.inference.llm
         mlflow_cfg = getattr(getattr(self._cfg, "integrations", None), "mlflow", None)
+        tracking_uri = (
+            getattr(mlflow_cfg, "tracking_uri", None)
+            or getattr(mlflow_cfg, "local_tracking_uri", None)
+            if mlflow_cfg is not None
+            else None
+        )
+
+        if not tracking_uri or not llm_cfg.system_prompt_mlflow_name:
+            registry = None
+        else:
+            try:
+                registry = MlflowPromptRegistry(tracking_uri=tracking_uri)
+            except ValueError as exc:
+                logger.error(f"[INFERENCE] MlflowPromptRegistry init failed: {exc}")
+                registry = None
+
+        loader = SystemPromptLoader(registry=registry)
 
         try:
-            result = SystemPromptLoader.load(llm_cfg, mlflow_cfg=mlflow_cfg)
+            result = loader.load(llm_cfg, on_mlflow_failure="warn")
         except ValueError as exc:
             logger.error(f"[INFERENCE] System prompt configuration error: {exc}")
             result = None

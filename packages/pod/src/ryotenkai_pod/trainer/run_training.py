@@ -409,7 +409,7 @@ def run_training(
         # writes the metrics to the nested child it owns. MemoryManager
         # is constructed with ``mlflow_manager=None`` so any internal
         # mlflow-wiring code paths short-circuit.
-        memory_manager = container.create_memory_manager_with_callbacks(None)
+        memory_manager = container.create_memory_manager_with_callbacks()
 
         if memory_manager.gpu_info:
             gpu = memory_manager.gpu_info
@@ -460,7 +460,6 @@ def run_training(
         orchestrator = container.create_orchestrator(
             model,
             tokenizer,
-            mlflow_manager=None,
         )
         logger.info("StrategyOrchestrator ready")
 

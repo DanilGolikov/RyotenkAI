@@ -55,9 +55,6 @@ def test_control_does_not_import_pod() -> None:
         # Phase D extraction follow-up:
         #   * dataset_validator → :class:`DatasetLoaderFactory` should be
         #     promoted to a shared/control-side data-loading package.
-        #   * mlflow_attempt → :class:`MLflowManager` is the mirror image
-        #     of A.5 (Mac side reaches into the pod runtime). Either move
-        #     manager into control or split into a Mac-side facade.
         #   * data/__init__ → :class:`JsonDatasetLoader` re-export ships
         #     under control for backwards compat; remove once consumers
         #     migrate to the shared loader package.
@@ -65,7 +62,6 @@ def test_control_does_not_import_pod() -> None:
         #     trainer-side concern leaking into Mac-side validation.
         "ryotenkai_control/pipeline/stages/dataset_validator/split_loader.py: from ryotenkai_pod.trainer.data_loaders.factory",
         "ryotenkai_control/pipeline/stages/dataset_validator/stage.py: from ryotenkai_pod.trainer.data_loaders.factory",
-        "ryotenkai_control/pipeline/mlflow_attempt/manager.py: from ryotenkai_pod.trainer.managers.mlflow_manager",
         "ryotenkai_control/data/__init__.py: from ryotenkai_pod.trainer.data_loaders",
         "ryotenkai_control/data/validation/standalone.py: from ryotenkai_pod.trainer.strategies.factory",
     }

@@ -15,7 +15,6 @@ from ryotenkai_shared.utils.logger import logger
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
 
-    from ryotenkai_pod.trainer.container import IMLflowManager
     from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
     from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
     from ryotenkai_shared.config import StrategyPhaseConfig
@@ -39,29 +38,21 @@ class ChainRunner:
       logged on the way out before the exception is re-raised.
 
     Example:
-        runner = ChainRunner(phase_executor, mlflow_manager=mlflow_manager)
+        runner = ChainRunner(phase_executor)
         try:
             model = runner.run(strategies=strategies, model=model, buffer=buffer)
         except TrainingFailedError as exc:
             ...
     """
 
-    def __init__(
-        self,
-        phase_executor: PhaseExecutor,
-        *,
-        mlflow_manager: IMLflowManager | None = None,
-    ):
-        """
-        Initialize ChainRunner.
+    def __init__(self, phase_executor: PhaseExecutor):
+        """Initialize :class:`ChainRunner`.
 
-        Args:
-            phase_executor: PhaseExecutor for running individual phases
-            mlflow_manager: Optional MLflowManager for experiment tracking
+        :param phase_executor: :class:`PhaseExecutor` for running
+            individual phases.
         """
         self.phase_executor = phase_executor
-        self._mlflow_manager = mlflow_manager
-        logger.debug(f"[CR:INIT] ChainRunner initialized (mlflow={mlflow_manager is not None})")
+        logger.debug("[CR:INIT] ChainRunner initialized")
 
     def run(
         self,
@@ -89,24 +80,12 @@ class ChainRunner:
             RyotenkAIError: surfaced from the underlying ``PhaseExecutor``.
         """
         total_phases = len(strategies)
-        chain_str = " → ".join(s.strategy_type.upper() for s in strategies)
 
-        # Log chain-level params to existing MLflow run (created by train_v2.py)
-        if self._mlflow_manager is not None and self._mlflow_manager.is_active:
-            self._mlflow_manager.log_params(
-                {
-                    "chain": chain_str,
-                    "total_phases": total_phases,
-                    "start_phase": start_phase,
-                    "run_id": buffer.run_id,
-                }
-            )
-            self._mlflow_manager.set_tags(
-                {
-                    "chain_type": chain_str,
-                    "phases_count": str(total_phases),
-                }
-            )
+        # Chain-level params/tags were historically logged to the wide
+        # ``IMLflowManager`` here. The wide manager has been retired;
+        # chain identity is now carried by :class:`TrainingStartedEvent`
+        # on the typed journal and by the parent attempt run tags set
+        # in :func:`open_attempt_with_coord`.
 
         return self._run_phases(strategies, model, buffer, start_phase, total_phases)
 
@@ -148,10 +127,11 @@ class ChainRunner:
                 )
             except RyotenkAIError as exc:
                 logger.debug(f"[CR:PHASE_FAILED] idx={idx}, error={exc}")
-                logger.error(f"❌ Phase {idx} ({phase.strategy_type}) failed")
-                # Log failure to MLflow if enabled
-                if self._mlflow_manager is not None:
-                    self._mlflow_manager.set_tags({"status": "failed", "failed_phase": str(idx)})
+                logger.error(f"Phase {idx} ({phase.strategy_type}) failed")
+                # Failure tag was historically logged via the wide
+                # ``IMLflowManager``. After retirement, the failure is
+                # captured by ``TrainingFailedEvent`` on the typed
+                # journal and the orchestrator's coord finalize.
                 raise
 
             # Update cascade flag: if phase was actually trained (not skipped), mark upstream as retrained
@@ -167,11 +147,9 @@ class ChainRunner:
         logger.debug(f"[CR:RUN_COMPLETE] run_id={buffer.run_id}, phases={total_phases}")
         logger.info(f"Training chain completed: {buffer.run_id}")
 
-        # Phase 7: ``log_event_complete`` removed. The chain-complete
-        # signal is captured via :class:`TrainingCompletedEvent` on the
-        # typed journal; tag below is kept for legacy MLflow UI filters.
-        if self._mlflow_manager is not None:
-            self._mlflow_manager.set_tags({"status": "completed"})
+        # Chain-complete signal flows via :class:`TrainingCompletedEvent`
+        # on the typed journal; the wide manager's status tag was the
+        # legacy carrier and is now redundant.
 
         return current_model
 

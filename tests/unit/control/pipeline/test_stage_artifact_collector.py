@@ -4,7 +4,7 @@ Unit tests for src/pipeline/artifacts/base.py
 Covers:
   - StageArtifactEnvelope: to_dict / from_dict, invariants
   - StageArtifactCollector: put / append / flush* lifecycle, is_flushed invariant
-  - save_stage_artifact: dependency errors, best-effort behaviour
+  - save_stage_artifact: no-op shim contract
   - utc_now_iso: basic sanity
   - Schemas TypedDict structural checks
 """
@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from tests._fakes.mlflow import FakeMLflowManager
 
 from ryotenkai_control.pipeline.artifacts.base import (
     STATUS_FAILED,
@@ -309,102 +307,27 @@ class TestStageArtifactCollectorIsFlushedInvariant:
 # =============================================================================
 
 class TestSaveStageArtifact:
-    def test_no_mlflow_manager_is_silent(self) -> None:
-        """No MLflowManager → no crash, no-op."""
+    """``save_stage_artifact`` is a no-op shim after the wide ``IMLflowManager``
+    retirement (see :mod:`ryotenkai_control.pipeline.artifacts.base`). Stage
+    artifacts now live on the typed event journal; this helper just keeps the
+    :class:`StageArtifactCollector` API surface alive without spreading the
+    no-op across every flush call site.
+    """
+
+    def test_no_context_is_silent(self) -> None:
+        """Empty context → no crash, no-op."""
         env = _make_envelope()
         save_stage_artifact({}, env, "test.json")  # must not raise
 
-    def test_inactive_mlflow_is_silent(self) -> None:
-        """Inactive MLflowManager does not write artifact."""
-        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-
-        # No setup() → is_active is False; FakeMLflowManager mirrors the
-        # pre-setup state of the real concrete MLflowManager.
-        fake_mgr = FakeMLflowManager()
-        context = {
-            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
-            PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "rid",
-        }
+    def test_arbitrary_context_is_silent(self) -> None:
+        """Even a populated context does not produce side effects."""
         env = _make_envelope()
-        save_stage_artifact(context, env, "test.json")
-        assert fake_mgr.log_dict_calls == []
-
-    def test_no_run_id_is_silent(self) -> None:
-        """MLflowManager present but run_id missing → does not write artifact."""
-        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-
-        fake_mgr = FakeMLflowManager()
-        fake_mgr.setup()
-        context = {PipelineContextKeys.MLFLOW_MANAGER: fake_mgr}  # no run_id
-        env = _make_envelope()
-        save_stage_artifact(context, env, "test.json")
-        assert fake_mgr.log_dict_calls == []
-
-    def test_mlflow_write_logs_dict_payload(self, tmp_path: Path) -> None:
-        """Happy path: envelope dict is written via MLflowManager.log_dict()."""
-        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-
-        fake_mgr = FakeMLflowManager()
-        fake_mgr.setup()
-
-        context = {
-            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
-            PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "run_abc",
-        }
-        env = _make_envelope(data={"score": 0.99})
-        save_stage_artifact(context, env, "my_artifact.json")
-
-        assert len(fake_mgr.log_dict_calls) == 1
-        call = fake_mgr.log_dict_calls[0]
-        assert call.payload == env.to_dict()
-        assert call.artifact_file == "my_artifact.json"
-        assert call.run_id == "run_abc"
-
-    def test_exception_in_log_dict_does_not_propagate(self) -> None:
-        """Dependency error: exception in log_dict is swallowed (best-effort)."""
-        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-
-        fake_mgr = FakeMLflowManager()
-        fake_mgr.setup()
-        fake_mgr.set_log_dict_error(RuntimeError("MLflow server down"))
-
-        context = {
-            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
-            PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "run_abc",
-        }
-        env = _make_envelope()
-        # must not raise
-        save_stage_artifact(context, env, "test.json")
-
-    def test_artifact_path_passed_through(self) -> None:
-        """artifact_path is prefixed into the target artifact file for log_dict."""
-        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-
-        fake_mgr = FakeMLflowManager()
-        fake_mgr.setup()
-
-        context = {
-            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
-            PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "rid",
-        }
-        save_stage_artifact(context, _make_envelope(), "eval.json", artifact_path="evaluation")
-        assert len(fake_mgr.log_dict_calls) == 1
-        call = fake_mgr.log_dict_calls[0]
-        assert call.artifact_file == "evaluation/eval.json"
-        assert call.run_id == "rid"
-
-    def test_empty_run_id_string_is_skipped(self) -> None:
-        """Boundary: run_id == '' → does not write artifact."""
-        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-
-        fake_mgr = FakeMLflowManager()
-        fake_mgr.setup()
-        context = {
-            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
-            PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "",
-        }
-        save_stage_artifact(context, _make_envelope(), "test.json")
-        assert fake_mgr.log_dict_calls == []
+        save_stage_artifact(
+            {"unrelated_key": "value"},
+            env,
+            "test.json",
+            artifact_path="nested",
+        )  # must not raise
 
 
 # =============================================================================
@@ -612,19 +535,10 @@ class TestArtifactRegressions:
         assert isinstance(env.duration_seconds, float)
         assert env.duration_seconds == 100.0
 
-    def test_save_stage_artifact_json_payload_matches_envelope(self) -> None:
-        """Regression: payload sent to MLflow matches envelope.to_dict()."""
-        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-
-        fake_mgr = FakeMLflowManager()
-        fake_mgr.setup()
-
-        context = {
-            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
-            PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "rid",
-        }
+    def test_save_stage_artifact_noop_does_not_raise(self) -> None:
+        """Regression: ``save_stage_artifact`` is a no-op after the wide
+        ``IMLflowManager`` retirement; the journal pipeline owns the
+        artifact write surface now.
+        """
         env = _make_envelope(data={"score": 0.75, "count": 10})
-        save_stage_artifact(context, env, "results.json")
-
-        assert len(fake_mgr.log_dict_calls) == 1
-        assert fake_mgr.log_dict_calls[0].payload == env.to_dict()
+        save_stage_artifact({}, env, "results.json")  # must not raise

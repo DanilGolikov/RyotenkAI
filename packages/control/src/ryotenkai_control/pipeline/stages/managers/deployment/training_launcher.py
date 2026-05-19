@@ -65,7 +65,7 @@ from ryotenkai_shared.errors import (
     SSHTransferFailedError,
     TrainingFailedError,
 )
-from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
+from ryotenkai_shared.infrastructure.mlflow.uri import RuntimeUriResolver
 from ryotenkai_shared.utils.clients.job_client import JobClient, JobClientError
 from ryotenkai_shared.utils.clients.ssh_tunnel import (
     SSHTunnelEndpoint,
@@ -532,7 +532,7 @@ class TrainingLauncher:
            ``PYTHONPATH``).
         2. Optional secrets (``HF_TOKEN`` if set).
         3. MLflow vars (resolved through
-           :func:`resolve_mlflow_uris`).
+           :meth:`RuntimeUriResolver.for_training`).
         4. Provider hook env_vars (``RUNPOD_API_KEY``,
            ``RUNPOD_KEEP_ON_ERROR``, etc.) — these intentionally win
            over our defaults so a provider can override e.g.
@@ -579,9 +579,12 @@ class TrainingLauncher:
             # linkage path) is REMOVED — the HF callback consumes
             # ``MLFLOW_RUN_ID`` + ``MLFLOW_NESTED_RUN`` directly to
             # produce structural nesting.
-            uris = resolve_mlflow_uris(mlflow_config, runtime_role="training")
-            if uris.effective_remote_tracking_uri:
-                env["MLFLOW_TRACKING_URI"] = uris.effective_remote_tracking_uri
+            try:
+                uri = RuntimeUriResolver.for_training(mlflow_config).uri
+            except ValueError:
+                uri = ""
+            if uri:
+                env["MLFLOW_TRACKING_URI"] = uri
             parent_run_id = context.get(PipelineContextKeys.MLFLOW_PARENT_RUN_ID)
             if isinstance(parent_run_id, str) and parent_run_id:
                 env["MLFLOW_RUN_ID"] = parent_run_id

@@ -190,64 +190,30 @@ def save_stage_artifact(
     artifact_name: str,
     artifact_path: str = "",
 ) -> None:
-    """Write envelope JSON to MLflow as a run artifact (best-effort).
+    """Write envelope JSON to MLflow as a run artifact (no-op shim).
 
-    Uses the MLflowManager instance from pipeline context to reuse the
-    already-open MLflow run without creating a new connection.
+    Historical behaviour pulled an ``IMLflowManager`` out of pipeline
+    context and called ``mgr.log_dict(envelope, artifact_name)``. After
+    the wide-manager retirement that context key is no longer written;
+    stage artifacts now live on the typed journal (``events.jsonl``)
+    which is uploaded to MLflow at run finalize via
+    :class:`MlflowFinalizer`.
 
-    Args:
-        context: pipeline context dict (must contain MLFLOW_MANAGER and
-            MLFLOW_PARENT_RUN_ID keys)
-        envelope: the envelope to serialise
-        artifact_name: filename for the artifact, e.g.
-            "dataset_validator_results.json"
-        artifact_path: optional subfolder within the MLflow artifact store,
-            e.g. "evaluation" → "evaluation/sub_results.json"
+    Keeping this function as a no-op preserves the
+    :class:`StageArtifactCollector` flush API surface (every
+    ``flush_*`` call routes through here) without spreading the change
+    further. Stages that need MLflow artifact uploads call
+    :class:`MlflowTransport` directly via DI.
+
+    :param context: Unused (kept for API back-compat).
+    :param envelope: Unused (already serialized into the journal).
+    :param artifact_name: Unused (only ``StageArtifactCollector`` reads it).
+    :param artifact_path: Unused (only ``StageArtifactCollector`` reads it).
     """
-    try:
-        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-
-        mlflow_mgr: Any = context.get(PipelineContextKeys.MLFLOW_MANAGER)
-        run_id: Any = context.get(PipelineContextKeys.MLFLOW_PARENT_RUN_ID)
-
-        # Duck-typed against IMLflowManager Protocol (plan §A.5):
-        # need ``is_active`` (a bool / property) and ``log_artifact``.
-        # Avoids importing the trainer-side concrete MLflowManager into
-        # the pipeline closure.
-        if mlflow_mgr is None or not getattr(mlflow_mgr, "is_active", False):
-            logger.debug(
-                "[ARTIFACT] MLflowManager not available — skipping artifact write for %s",
-                artifact_name,
-            )
-            return
-
-        if not isinstance(run_id, str) or not run_id:
-            logger.debug(
-                "[ARTIFACT] No MLflow run_id in context — skipping artifact write for %s",
-                artifact_name,
-            )
-            return
-
-        full_artifact_name = f"{artifact_path}/{artifact_name}" if artifact_path else artifact_name
-        ok = mlflow_mgr.log_dict(
-            envelope.to_dict(),
-            full_artifact_name,
-            run_id=run_id,
-        )
-        if ok:
-            logger.debug(
-                "[ARTIFACT] Wrote %s (status=%s, run=%s)",
-                full_artifact_name,
-                envelope.status,
-                run_id[:8],
-            )
-
-    except Exception as exc:
-        logger.warning(
-            "[ARTIFACT] Failed to write artifact %s (non-fatal): %s",
-            artifact_name,
-            exc,
-        )
+    # Intentionally empty -- see docstring. ``logger.debug`` line dropped
+    # to keep the hot path noise-free; the journal already records the
+    # stage outcome.
+    del context, envelope, artifact_name, artifact_path
 
 
 def utc_now_iso() -> str:

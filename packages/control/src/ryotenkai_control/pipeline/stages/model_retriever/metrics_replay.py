@@ -9,8 +9,9 @@ The trainer's :class:`~src.training.mlflow.resilient_transport.ResilientMLflowTr
 buffers every ``mlflow.log_metric`` call to
 ``<workspace>/metrics_buffer.jsonl`` while the circuit breaker is
 open (MLflow upstream unreachable — typically because the Mac is
-asleep). Phase 11.A added :meth:`~src.training.callbacks.completion_callback.CompletionCallback.on_train_end`
-which drains the buffer at end-of-training, but only succeeds when
+asleep). The unified :class:`TerminalCallback` (reason="complete") drains
+the buffer at end-of-training via its ``on_train_end`` hook, but only
+succeeds when
 MLflow upstream is reachable at that exact moment. If the Mac is
 still asleep when training ends, the drain fails (no MLflow
 connectivity) and the buffer file stays on disk. Without Phase 12

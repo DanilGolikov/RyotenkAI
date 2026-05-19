@@ -23,7 +23,6 @@ import importlib
 # renames one of these, update the list here AND verify the rename was
 # intentional. The intent is to catch *silent regressions* in discovery.
 ANCHOR_PROTOCOLS = (
-    "IMLflowManager",
     "IPodLifecycleClient",
     "IDockerClient",
     "ISSHClient",

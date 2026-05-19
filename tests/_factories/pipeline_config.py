@@ -41,7 +41,7 @@ from ryotenkai_shared.config import (
     DatasetSourceLocal,
     GlobalHyperparametersConfig,
     IntegrationsConfig,
-    MLflowConfig,
+    MLflowProjectConfig,
     ModelConfig,
     PipelineConfig,
     QLoRAConfig,
@@ -101,7 +101,7 @@ def _default_integrations() -> IntegrationsConfig:
     bootstrap; tests that want it disabled pass ``integrations=None``
     or override ``integrations=IntegrationsConfig()``."""
     return IntegrationsConfig(
-        mlflow=MLflowConfig(
+        mlflow=MLflowProjectConfig(
             tracking_uri="http://localhost:5002",
             experiment_name="test-exp",
         ),

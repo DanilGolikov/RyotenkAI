@@ -211,7 +211,6 @@ class TestPositive:
         out = loop.run_attempt(
             prepared=prepared,
             context=context,
-            mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
         assert out is context
@@ -227,7 +226,7 @@ class TestPositive:
         context = _mk_context()
 
         loop.run_attempt(
-            prepared=prepared, context=context, mlflow_manager=None,
+            prepared=prepared, context=context,
             log_layout=prepared.log_layout,
         )
         assert context["key_from_stage"] == 42
@@ -238,7 +237,7 @@ class TestPositive:
         prepared = _make_prepared(tmp_path, stages)
 
         loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         assert hook.call_args_list == [((s.stage_name,),) for s in stages]
@@ -249,27 +248,28 @@ class TestPositive:
         prepared = dataclasses.replace(prepared, enabled_stage_names=(STAGE_A,))
 
         loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         assert controller.state.attempts[-1].stage_runs[STAGE_B].status == StageRunState.STATUS_SKIPPED
         stages[1].run.assert_not_called()
 
-    def test_mlflow_events_emitted_per_stage(self, tmp_path: Path) -> None:
+    def test_stage_execution_completes_without_wide_mlflow_manager(
+        self, tmp_path: Path
+    ) -> None:
+        """After the wide ``IMLflowManager`` retirement, the loop no
+        longer calls ``log_stage_*`` on a manager -- per-stage signals
+        flow via :class:`StageStartedEvent` / :class:`StageCompletedEvent`
+        on the typed journal. We pin only that the run completes.
+        """
         loop, _, stages, _, _ = _build_loop(tmp_path)
         prepared = _make_prepared(tmp_path, stages)
-        mlflow = MagicMock()
 
-        loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=mlflow,
+        ctx = loop.run_attempt(
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
-        assert mlflow.log_stage_start.call_count == len(stages)
-        assert mlflow.log_stage_complete.call_count == len(stages)
-        # Phase 7: ``log_event_complete`` on pipeline finalization removed;
-        # the typed journal (``RunCompletedEvent``) is the SSOT. The
-        # MLflow tag below is still set for legacy UI filters.
-        mlflow.set_tags.assert_any_call({"pipeline.status": "completed"})
+        assert ctx is not None
 
 
 # ===========================================================================
@@ -288,7 +288,7 @@ class TestNegative:
 
         with pytest.raises(PipelineStageFailedError) as ei:
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         # Same typed exception propagates upward.
@@ -311,7 +311,7 @@ class TestNegative:
 
         with pytest.raises(PipelineStageFailedError):
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         assert controller.state.pipeline_status == StageRunState.STATUS_FAILED
@@ -329,7 +329,7 @@ class TestNegative:
 
         with pytest.raises(PipelineStageFailedError) as ei:
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         assert ei.value.context["legacy_code"] == "PREREQ"
@@ -347,7 +347,7 @@ class TestNegative:
 
         with pytest.raises(InternalError) as ei:
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         assert ei.value.context["legacy_code"] == "UNEXPECTED_ERROR"
@@ -371,7 +371,7 @@ class TestNegative:
 
         with pytest.raises(InternalError) as ei:
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         assert ei.value.context["legacy_code"] == "PIPELINE_STATE_ERROR"
@@ -391,7 +391,7 @@ class TestBoundary:
         ctx = _mk_context()
 
         out = loop.run_attempt(
-            prepared=prepared, context=ctx, mlflow_manager=None,
+            prepared=prepared, context=ctx,
             log_layout=prepared.log_layout,
         )
         assert out is ctx
@@ -405,7 +405,7 @@ class TestBoundary:
         prepared = dataclasses.replace(prepared, start_idx=1)
 
         loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         stages[0].run.assert_not_called()
@@ -419,7 +419,7 @@ class TestBoundary:
         prepared = dataclasses.replace(prepared, stop_idx=2)
 
         loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         stages[0].run.assert_called_once()
@@ -432,7 +432,7 @@ class TestBoundary:
         prepared = _make_prepared(tmp_path, stages)
 
         out = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         assert out is not None
@@ -453,7 +453,7 @@ class TestInvariants:
         save_fn.reset_mock()
 
         loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         n_stages = len(stages)
@@ -473,7 +473,7 @@ class TestInvariants:
         prepared = _make_prepared(tmp_path, stages)
 
         loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         summary.print_summary.assert_called_once()
@@ -486,7 +486,7 @@ class TestInvariants:
 
         with pytest.raises(PipelineStageFailedError):
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         summary.print_summary.assert_not_called()
@@ -501,7 +501,7 @@ class TestInvariants:
 
         with pytest.raises(PipelineStageFailedError) as ei:
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         assert ei.value.context["legacy_code"] == "PIPELINE_INTERRUPTED"
@@ -516,7 +516,7 @@ class TestInvariants:
 
         with pytest.raises(PipelineStageFailedError):
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         hook.assert_called_once_with("SIGINT")
@@ -534,7 +534,7 @@ class TestDependencyErrors:
         prepared = _make_prepared(tmp_path, stages)
 
         out = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         assert out is not None
@@ -548,7 +548,7 @@ class TestDependencyErrors:
 
         with pytest.raises(PipelineStageFailedError):
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         collectors[STAGE_A].flush_error.assert_not_called()
@@ -567,7 +567,7 @@ class TestDependencyErrors:
 
         with pytest.raises(InternalError) as ei:
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         assert ei.value.context["legacy_code"] == "PIPELINE_STATE_ERROR"
@@ -587,7 +587,7 @@ class TestRegressions:
 
         with pytest.raises(SystemExit):
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
 
@@ -598,7 +598,7 @@ class TestRegressions:
         prepared = _make_prepared(tmp_path, stages)
 
         out = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         assert out is not None
@@ -609,7 +609,7 @@ class TestRegressions:
         prepared = _make_prepared(tmp_path, stages)
 
         loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+            prepared=prepared, context=_mk_context(),
             log_layout=prepared.log_layout,
         )
         for s in stages:
@@ -617,7 +617,7 @@ class TestRegressions:
 
     def test_outside_loop_interrupt_helper_marks_attempt(self, tmp_path: Path) -> None:
         loop, controller, _, _, _ = _build_loop(tmp_path)
-        loop.handle_interrupt_outside_loop(mlflow_manager=None)
+        loop.handle_interrupt_outside_loop()
         assert controller.state.pipeline_status == StageRunState.STATUS_INTERRUPTED
 
     def test_outside_loop_unexpected_error_helper_returns_typed_exc(
@@ -625,7 +625,7 @@ class TestRegressions:
     ) -> None:
         loop, controller, _, _, _ = _build_loop(tmp_path)
         err = RuntimeError("bang")
-        typed_exc = loop.handle_unexpected_error_outside_loop(err, mlflow_manager=None)
+        typed_exc = loop.handle_unexpected_error_outside_loop(err)
         assert isinstance(typed_exc, InternalError)
         assert typed_exc.context["legacy_code"] == "UNEXPECTED_ERROR"
         assert typed_exc.context["exception_type"] == "RuntimeError"
@@ -644,7 +644,7 @@ class TestRegressions:
 
         with pytest.raises(RyotenkAIError) as ei:
             loop.run_attempt(
-                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                prepared=prepared, context=_mk_context(),
                 log_layout=prepared.log_layout,
             )
         assert ei.value is original
@@ -693,7 +693,7 @@ def test_success_matrix(
     prepared = _make_prepared(tmp_path, [stage])
 
     out = loop.run_attempt(
-        prepared=prepared, context=_mk_context(), mlflow_manager=None,
+        prepared=prepared, context=_mk_context(),
         log_layout=prepared.log_layout,
     )
     assert out is not None

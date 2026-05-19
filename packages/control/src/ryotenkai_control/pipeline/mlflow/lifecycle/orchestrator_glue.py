@@ -36,12 +36,11 @@ if TYPE_CHECKING:
         PreflightConnectivityCheck,
         RunLifecycleCoord,
     )
-    from ryotenkai_control.pipeline.mlflow_attempt import MLflowAttemptManager
     from ryotenkai_control.pipeline.state import (
         PipelineAttemptState,
         PipelineState,
     )
-    from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
+    from ryotenkai_shared.infrastructure.mlflow.transport import MlflowTransport
 
 
 __all__ = [
@@ -51,7 +50,6 @@ __all__ = [
     "open_attempt_with_coord",
     "resolve_journal_for_upload",
     "run_preflight_or_fallback",
-    "stamp_state_tracking_uri",
     "teardown_attempt_with_coord",
 ]
 
@@ -101,52 +99,24 @@ def derive_provider_gpu(config: Any) -> str:
 def run_preflight_or_fallback(
     *,
     preflight: PreflightConnectivityCheck | None,
-    legacy_mgr: MLflowAttemptManager,
 ) -> None:
-    """Run the narrow preflight, falling back to the legacy probe.
+    """Run the narrow preflight if present; otherwise no-op.
 
     :raises RyotenkAIError: Wrapped at the caller via
-        :func:`_wrap_as_launch_error`. Both narrow and legacy paths
-        raise typed :class:`RyotenkAIError` subclasses; the orchestrator
-        translates them to :class:`LaunchPreparationError`.
+        :func:`_wrap_as_launch_error`. The narrow preflight raises
+        typed :class:`RyotenkAIError` subclasses on connectivity
+        failure; the orchestrator translates to
+        :class:`LaunchPreparationError`.
     """
     if preflight is not None:
-        # Narrow stack: ping-based, no probe-run side effects.
         preflight.run()
-        return
-    # Narrow stack absent — keep the legacy ``ensure_preflight`` so a
-    # config without ``tracking_uri`` still fails fast.
-    legacy_mgr.ensure_preflight()
-
-
-def stamp_state_tracking_uri(
-    *,
-    manager: IMLflowManager,
-    config: Any,
-    state: PipelineState,
-) -> None:
-    """Persist the runtime tracking URI + CA bundle on ``state``.
-
-    The trainer subprocess re-uses these on resume so it doesn't have
-    to re-resolve the URI via the config block.
-    """
-    runtime_uri = manager.get_runtime_tracking_uri()
-    ca_bundle = getattr(config.integrations.mlflow, "ca_bundle_path", None)
-    state.mlflow_runtime_tracking_uri = (
-        runtime_uri
-        if isinstance(runtime_uri, str) and runtime_uri
-        else None
-    )
-    state.mlflow_ca_bundle_path = (
-        ca_bundle if isinstance(ca_bundle, str) and ca_bundle else None
-    )
 
 
 def open_attempt_with_coord(
     *,
     coord: RunLifecycleCoord,
     opener: ParentRunOpener,
-    manager: IMLflowManager,
+    transport: MlflowTransport | None,
     config: Any,
     state: PipelineState,
     attempt: PipelineAttemptState,
@@ -157,14 +127,16 @@ def open_attempt_with_coord(
 ) -> None:
     """Open or adopt root + open nested attempt run via the narrow stack.
 
-    Preserves the legacy side effects of
-    ``MLflowAttemptManager.setup_for_attempt`` verbatim:
+    Side effects:
 
     * ``state.root_mlflow_run_id`` + ``attempt.*_mlflow_run_id`` populated.
-    * Context keys ``MLFLOW_PARENT_RUN_ID`` / ``MLFLOW_MANAGER`` set.
-    * Wide-manager logging (``log_pipeline_config`` /
-      ``log_dataset_config`` / ``log_params``).
-    * ``meta.*`` tag bundle from ``state.metadata``.
+    * Context key ``MLFLOW_PARENT_RUN_ID`` set (consumed downstream).
+    * Pipeline + dataset configs logged as JSON artifacts via the
+      narrow :class:`MlflowTransport`.
+    * Pipeline params (total_stages / start_stage / run_directory) logged
+      directly via ``transport.client.log_param``.
+    * ``meta.*`` tag bundle from ``state.metadata`` applied via
+      ``transport.set_tags``.
 
     On any failure, the coord is finalized with
     :data:`RunStatus.FAILED` and re-raised; the caller is responsible
@@ -203,38 +175,36 @@ def open_attempt_with_coord(
         coord.bind_attempt_run(attempt_run)
         attempt.pipeline_attempt_mlflow_run_id = attempt_run.run_id
 
-        # Context propagation (consumed by stages — artifacts/base.py:210,
-        # training_launcher.py:585, etc.).
+        # Context propagation (consumed by stages -- artifacts/base.py,
+        # training_launcher.py, etc.).
         context[PipelineContextKeys.MLFLOW_PARENT_RUN_ID] = attempt_run.run_id
-        context[PipelineContextKeys.MLFLOW_MANAGER] = manager
 
-        # Wide-manager logging (no narrow equivalent for these rich
-        # payloads yet).
-        try:
-            manager.log_pipeline_config(config)
-            manager.log_dataset_config(config)
-            manager.log_params(
-                {
-                    "pipeline.total_stages": total_stages,
-                    "pipeline.start_stage": start_stage_idx,
-                    "pipeline.run_directory": str(run_directory),
-                }
-            )
-        except Exception as e:  # noqa: BLE001 — best-effort logging
-            logger.warning(f"MLflow wide-manager logging failed: {e}")
-
-        # ``meta.*`` tags from ``state.metadata``.
-        if state.metadata:
-            tags = {
-                f"meta.{key}": stringify_tag_value(value)
-                for key, value in state.metadata.items()
-            }
+        # Narrow logging of pipeline + dataset configs as JSON artifacts.
+        if transport is not None:
             try:
-                manager.set_tags(tags)
-            except Exception as e:  # noqa: BLE001 — best-effort logging
-                logger.warning(f"MLflow set_tags failed: {e}")
+                _log_attempt_payloads_narrow(
+                    transport=transport,
+                    run_id=attempt_run.run_id,
+                    config=config,
+                    total_stages=total_stages,
+                    start_stage_idx=start_stage_idx,
+                    run_directory=run_directory,
+                )
+            except Exception as e:  # noqa: BLE001 -- best-effort logging
+                logger.warning(f"MLflow narrow attempt payload logging failed: {e}")
+
+            # ``meta.*`` tags from ``state.metadata``.
+            if state.metadata:
+                tags = {
+                    f"meta.{key}": stringify_tag_value(value)
+                    for key, value in state.metadata.items()
+                }
+                try:
+                    transport.set_tags(attempt_run.run_id, tags)
+                except Exception as e:  # noqa: BLE001 -- best-effort logging
+                    logger.warning(f"MLflow set_tags failed: {e}")
     except Exception:
-        # Cleanup partial runs — finalizer's idempotency tag means
+        # Cleanup partial runs -- finalizer's idempotency tag means
         # repeated close is harmless even if e.g. only the root opened
         # before failure.
         try:
@@ -246,12 +216,65 @@ def open_attempt_with_coord(
         raise
 
 
+def _log_attempt_payloads_narrow(
+    *,
+    transport: MlflowTransport,
+    run_id: str,
+    config: Any,
+    total_stages: int,
+    start_stage_idx: int,
+    run_directory: Path | None,
+) -> None:
+    """Log pipeline + dataset configs + params via the narrow transport.
+
+    Uses the underlying ``MlflowClient`` for ``log_dict`` and ``log_param``
+    -- batched call would also work but the per-row API is available on
+    all MLflow versions and the cost is irrelevant at attempt-open
+    frequency.
+    """
+    client = transport.client
+
+    # Serialize the relevant config sections into JSON-friendly payloads.
+    def _to_jsonable(obj: Any) -> Any:
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump()
+        if hasattr(obj, "dict"):
+            try:
+                return obj.dict()
+            except Exception:  # noqa: BLE001
+                pass
+        return str(obj)
+
+    try:
+        pipeline_payload = _to_jsonable(config)
+        client.log_dict(run_id, pipeline_payload, "config/pipeline_config.json")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"log_dict pipeline_config failed: {e}")
+
+    try:
+        datasets_payload = _to_jsonable(getattr(config, "datasets", {}) or {})
+        client.log_dict(run_id, datasets_payload, "config/dataset_config.json")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"log_dict dataset_config failed: {e}")
+
+    pipeline_params = {
+        "pipeline.total_stages": str(total_stages),
+        "pipeline.start_stage": str(start_stage_idx),
+        "pipeline.run_directory": str(run_directory),
+    }
+    for pkey, pvalue in pipeline_params.items():
+        try:
+            client.log_param(run_id, pkey, pvalue)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"log_param {pkey} failed: {e}")
+
+
 def teardown_attempt_with_coord(
     *,
     coord: RunLifecycleCoord,
-    manager: IMLflowManager,
-    pipeline_success: bool,
+    transport: MlflowTransport | None,
     attempt_run_id: str | None,
+    pipeline_success: bool,
     shutdown_signal_name: str | None,
     state_path: Path | None,
     on_save_state: Any,
@@ -259,17 +282,15 @@ def teardown_attempt_with_coord(
     on_after_end: Any,
     emitter: Any,
 ) -> None:
-    """Drive ``coord.finalize`` with the five legacy hook side-effects.
+    """Drive ``coord.finalize`` with the legacy hook side-effects.
 
-    Order preserved verbatim from
-    :meth:`MLflowAttemptManager.teardown_attempt`:
+    Order:
 
-    1. ``on_before_end`` — aggregate training metrics (best-effort).
-    2. ``log_artifact(state.json)`` — persist final state to MLflow.
-    3. ``coord.finalize`` — uploads journal + stamps lifecycle tags +
+    1. ``on_before_end`` -- aggregate training metrics (best-effort).
+    2. ``log_artifact(state.json)`` via the narrow transport (best-effort).
+    3. ``coord.finalize`` -- uploads journal + stamps lifecycle tags +
        set_terminated on both attempt and root runs.
-    4. ``on_after_end`` — generate experiment report (best-effort).
-    5. ``manager.cleanup`` — restore env vars + unregister atexit.
+    4. ``on_after_end`` -- generate experiment report (best-effort).
 
     Caller is responsible for calling ``coord.__exit__`` after this
     returns so the orchestrator can also reset its
@@ -278,18 +299,26 @@ def teardown_attempt_with_coord(
     # Hook 1: aggregate training metrics (was on_before_end).
     try:
         on_before_end()
-    except Exception as e:  # noqa: BLE001 — best-effort
+    except Exception as e:  # noqa: BLE001 -- best-effort
         logger.warning(f"MLflow teardown before-end hook failed: {e}")
 
-    # Hook 2: log state.json artifact (was state_path_supplier).
+    # Hook 2: log state.json artifact via the narrow transport.
     try:
         on_save_state()
-        if state_path is not None and state_path.exists():
-            manager.log_artifact(str(state_path))
-    except Exception as e:  # noqa: BLE001 — best-effort
+        if (
+            state_path is not None
+            and state_path.exists()
+            and transport is not None
+            and attempt_run_id is not None
+        ):
+            try:
+                transport.client.log_artifact(attempt_run_id, str(state_path))
+            except Exception as e:  # noqa: BLE001 -- best-effort
+                logger.warning(f"MLflow state.json artifact upload failed: {e}")
+    except Exception as e:  # noqa: BLE001 -- best-effort
         logger.warning(f"MLflow state.json artifact upload failed: {e}")
 
-    # Hook 3: finalize via coord — never raises.
+    # Hook 3: finalize via coord -- never raises.
     journal_path, journal_sha256 = resolve_journal_for_upload(emitter)
     try:
         coord.finalize(
@@ -300,20 +329,14 @@ def teardown_attempt_with_coord(
             journal_sha256=journal_sha256,
             exit_reason=shutdown_signal_name,
         )
-    except Exception as e:  # noqa: BLE001 — defensive
+    except Exception as e:  # noqa: BLE001 -- defensive
         logger.warning(f"MLflow lifecycle coord finalize failed: {e}")
 
     # Hook 4: generate experiment report (was on_after_end).
     try:
         on_after_end(attempt_run_id)
-    except Exception as e:  # noqa: BLE001 — best-effort
+    except Exception as e:  # noqa: BLE001 -- best-effort
         logger.warning(f"MLflow teardown after-end hook failed: {e}")
-
-    # Hook 5: cleanup wide manager.
-    try:
-        manager.cleanup()
-    except Exception as e:  # noqa: BLE001 — best-effort
-        logger.warning(f"MLflow wide-manager cleanup failed: {e}")
 
 
 def resolve_journal_for_upload(

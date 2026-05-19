@@ -22,7 +22,6 @@ from ryotenkai_control.pipeline.mlflow.lifecycle.orchestrator_glue import (
     derive_provider_gpu,
     derive_provider_kind,
     resolve_journal_for_upload,
-    stamp_state_tracking_uri,
 )
 
 
@@ -79,34 +78,7 @@ class TestDeriveProviderGpu:
 
 
 # ---------------------------------------------------------------------------
-# 2. POSITIVE — stamp_state_tracking_uri
-# ---------------------------------------------------------------------------
-
-
-class TestStampStateTrackingUri:
-    def test_stamps_runtime_uri_and_ca_bundle(self) -> None:
-        manager = MagicMock()
-        manager.get_runtime_tracking_uri.return_value = "http://localhost:5002"
-        cfg = MagicMock()
-        cfg.integrations.mlflow.ca_bundle_path = "/tmp/ca.pem"
-        state = MagicMock()
-        stamp_state_tracking_uri(manager=manager, config=cfg, state=state)
-        assert state.mlflow_runtime_tracking_uri == "http://localhost:5002"
-        assert state.mlflow_ca_bundle_path == "/tmp/ca.pem"
-
-    def test_stamps_none_when_uri_empty(self) -> None:
-        manager = MagicMock()
-        manager.get_runtime_tracking_uri.return_value = ""
-        cfg = MagicMock()
-        cfg.integrations.mlflow.ca_bundle_path = None
-        state = MagicMock()
-        stamp_state_tracking_uri(manager=manager, config=cfg, state=state)
-        assert state.mlflow_runtime_tracking_uri is None
-        assert state.mlflow_ca_bundle_path is None
-
-
-# ---------------------------------------------------------------------------
-# 3. POSITIVE / NEGATIVE — resolve_journal_for_upload
+# 2. POSITIVE / NEGATIVE — resolve_journal_for_upload
 # ---------------------------------------------------------------------------
 
 

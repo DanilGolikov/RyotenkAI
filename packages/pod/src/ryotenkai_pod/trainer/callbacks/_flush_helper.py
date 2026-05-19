@@ -1,9 +1,8 @@
-"""Phase 11.A — shared flush-with-deadline helper for terminal callbacks.
+"""Shared flush-with-deadline helper for the unified terminal callback.
 
-Both :class:`CancellationCallback` (Phase 9.B) and
-:class:`CompletionCallback` (Phase 11.A) call
+The :class:`TerminalCallback` (reason="cancel" / "complete") calls
 ``mlflow_manager.flush_buffer()`` inside a hard 5-second deadline on
-``on_train_end``. The deadline has the same shape on both paths:
+``on_train_end``. The deadline has the same shape on both reasons:
 
 * Cancellation path — trainer about to exit because user pressed Stop.
   We want to drain the buffered MLflow records into the live run BEFORE

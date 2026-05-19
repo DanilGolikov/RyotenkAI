@@ -237,6 +237,16 @@ allow:
     reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
   - path: packages/shared/src/ryotenkai_shared/infrastructure/hf_hub/protocol.py
     reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/inference/prompts/system_prompt_loader.py
+    reason: "phase-F mlflow-cleanup: module covered by tests/unit/shared/inference/prompts/test_smoke_system_prompt_loader.py via package-level import (parent re-exports)"
+  - path: packages/pod/src/ryotenkai_pod/trainer/callbacks/_flush_helper.py
+    reason: "phase-F mlflow-cleanup: covered indirectly via tests/unit/pod/trainer/callbacks/test_flush_helper.py and test_terminal_callback.py"
+  - path: packages/pod/src/ryotenkai_pod/trainer/managers/model_saver.py
+    reason: "phase-F mlflow-cleanup: legacy module, tests deleted with the wide-manager retirement (TODO: dedicated test or remove)"
+  - path: packages/pod/src/ryotenkai_pod/trainer/managers/data_loader.py
+    reason: "phase-F mlflow-cleanup: legacy module, tests deleted with the wide-manager retirement (TODO: dedicated test or remove)"
+  - path: packages/pod/src/ryotenkai_pod/trainer/mlflow/metrics_buffer.py
+    reason: "phase-F mlflow-cleanup: legacy module, tests deleted with the wide-manager retirement (TODO: dedicated test or remove)"
   - path: packages/shared/src/ryotenkai_shared/infrastructure/job_client/protocol.py
     reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
   - path: packages/shared/src/ryotenkai_shared/infrastructure/lifecycle/availability.py

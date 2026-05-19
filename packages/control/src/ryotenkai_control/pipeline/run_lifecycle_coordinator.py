@@ -68,7 +68,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
     from ryotenkai_shared.pipeline_context import RunContext
 
 
@@ -85,7 +84,6 @@ class RunLifecycleCoordinator:
 
        coord = RunLifecycleCoordinator(
            run_ctx=...,
-           mlflow_manager_supplier=lambda: orch._mlflow_manager,
            ...
        )
        coord.bind_run_directory(run_dir)         # lazy emitter construction
@@ -116,7 +114,6 @@ class RunLifecycleCoordinator:
         mlflow_run_id_supplier: Callable[[], str | None],
         active_stage_supplier: Callable[[], str | None],
         shutdown_signal_supplier: Callable[[], str | None],
-        mlflow_manager_supplier: Callable[[], IMLflowManager | None],
         pre_built_emitter: ControlEventEmitter | None = None,
     ) -> None:
         """Construct the coordinator.
@@ -136,7 +133,6 @@ class RunLifecycleCoordinator:
         self._mlflow_run_id_supplier = mlflow_run_id_supplier
         self._active_stage_supplier = active_stage_supplier
         self._shutdown_signal_supplier = shutdown_signal_supplier
-        self._mlflow_manager_supplier = mlflow_manager_supplier
 
         self._emitter: ControlEventEmitter | None = None
         self._registered = False

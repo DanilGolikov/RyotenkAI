@@ -96,7 +96,7 @@ class _FakeMlflowManager:
 def _make_coordinator(
     *,
     run_ctx: RunContext | None = None,
-    mlflow_manager: Any = None,
+    mlflow_manager: Any = None,  # noqa: ARG001 -- kept for back-compat callers
     shutdown_signal: str | None = None,
     pre_built_emitter: ControlEventEmitter | None = None,
     active_stage: str | None = None,
@@ -111,7 +111,6 @@ def _make_coordinator(
         mlflow_run_id_supplier=lambda: mlflow_run_id,
         active_stage_supplier=lambda: active_stage,
         shutdown_signal_supplier=lambda: shutdown_signal,
-        mlflow_manager_supplier=lambda: mlflow_manager,
         pre_built_emitter=pre_built_emitter,
     )
 

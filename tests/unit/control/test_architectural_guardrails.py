@@ -72,8 +72,6 @@ class TestFileSizeLimits:
         # the orchestrator focused on coordination. Cap set above
         # current with the usual ~1 % headroom.
         ("packages/control/src/ryotenkai_control/pipeline/orchestrator.py", 1000),
-        # MLflowManager — now in pod package (training-side concern); 714 lines.
-        ("packages/pod/src/ryotenkai_pod/trainer/managers/mlflow_manager/manager.py", 800),
         # training_monitor.py — 1404 lines after the Group 1 follow-up
         # extracted pod-event forwarding into
         # ``training_monitor_pod_event_forwarder.py`` (PodEventForwarder
@@ -172,9 +170,6 @@ class TestNoCycles:
     @pytest.mark.parametrize("module_path", [
         "ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager",
         "ryotenkai_control.pipeline.state.transitioner",
-        "ryotenkai_pod.trainer.managers.mlflow_manager.manager",
-        "ryotenkai_pod.trainer.mlflow.resilient_transport",
-        "ryotenkai_pod.trainer.mlflow.metrics_buffer",
     ])
     def test_module_imports_cleanly(self, module_path: str) -> None:
         """Module must be importable without circular-import errors."""
@@ -217,42 +212,12 @@ class TestNoCycles:
 
 
 # ---------------------------------------------------------------------------
-# 3. CO-CHANGE CONTRACT: MLflowDatasetLogger constructor shape
+# 3. CO-CHANGE CONTRACT (retired)
 # ---------------------------------------------------------------------------
-
-class TestMLflowDatasetLoggerContract:
-    """MLflowDatasetLogger must remain constructable via _make_dataset_logger().
-
-    The factory method in MLflowManager.__init__ is the single source of truth
-    for construction.  We verify the constructor still accepts the expected
-    keyword arguments so that refactors to MLflowDatasetLogger don't silently
-    break MLflowManager.
-    """
-
-    def test_dataset_logger_constructor_accepts_expected_kwargs(self) -> None:
-        import inspect
-        from ryotenkai_pod.trainer.mlflow.dataset_logger import MLflowDatasetLogger
-
-        sig = inspect.signature(MLflowDatasetLogger.__init__)
-        params = set(sig.parameters.keys()) - {"self"}
-        required = {"mlflow_module", "primitives", "has_active_run"}
-        missing = required - params
-        assert not missing, (
-            f"MLflowDatasetLogger.__init__ is missing expected parameters: {missing}. "
-            "Update _make_dataset_logger() in manager.py to match."
-        )
-
-    def test_make_dataset_logger_is_the_only_constructor_site(self) -> None:
-        """MLflowDatasetLogger(...) must only be constructed via _make_dataset_logger."""
-        mgr_dir = SRC / "training/managers/mlflow_manager"
-        for py_file in mgr_dir.glob("*.py"):
-            if py_file.name == "manager.py":
-                continue  # _make_dataset_logger itself lives here
-            src = py_file.read_text(encoding="utf-8")
-            assert "MLflowDatasetLogger(" not in src, (
-                f"{py_file.name} constructs MLflowDatasetLogger directly. "
-                "Use self._make_dataset_logger() instead to keep construction centralised."
-            )
+# The MLflowDatasetLogger co-change contract guarded the wide
+# ``MLflowManager`` god-class's ``_make_dataset_logger`` factory. That
+# class and its companion modules have been removed in M7; the narrow
+# transport now logs datasets directly via ``MlflowClient.log_dict``.
 
 
 # ---------------------------------------------------------------------------
@@ -303,14 +268,8 @@ class TestExtractionContracts:
         mod = importlib.import_module("ryotenkai_control.pipeline.stages.dataset_validator")
         assert hasattr(mod, "ValidationArtifactManager")
 
-    def test_resilient_transport_public_api(self) -> None:
-        from ryotenkai_pod.trainer.mlflow.resilient_transport import ResilientMLflowTransport
-
-        expected = ["install", "uninstall", "breaker_state"]
-        for attr in expected:
-            assert hasattr(ResilientMLflowTransport, attr), (
-                f"ResilientMLflowTransport missing '{attr}'"
-            )
+    # ResilientMLflowTransport contract retired -- module removed in M7
+    # cleanup along with the wide MLflowManager god-class.
 
 
 # ---------------------------------------------------------------------------

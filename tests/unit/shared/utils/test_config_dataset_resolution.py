@@ -21,7 +21,7 @@ from ryotenkai_shared.config import (
     GlobalHyperparametersConfig,
     InferenceConfig,
     IntegrationsConfig,
-    MLflowConfig,
+    MLflowProjectConfig,
     ModelConfig,
     PipelineConfig,
     QLoRAConfig,
@@ -113,7 +113,7 @@ class TestGetDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             integrations=IntegrationsConfig(
-                mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test")
+                mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test")
             ),
         )
 
@@ -129,7 +129,7 @@ class TestGetDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             integrations=IntegrationsConfig(
-                mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test")
+                mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test")
             ),
         )
 
@@ -144,7 +144,7 @@ class TestGetDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             integrations=IntegrationsConfig(
-                mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test")
+                mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test")
             ),
         )
 
@@ -167,7 +167,7 @@ class TestPrimaryDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             integrations=IntegrationsConfig(
-                mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test")
+                mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test")
             ),
         )
 
@@ -183,7 +183,7 @@ class TestPrimaryDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             integrations=IntegrationsConfig(
-                mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test")
+                mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test")
             ),
         )
 
@@ -210,7 +210,7 @@ class TestDatasetForStrategy:
             ),
             inference=_inference_cfg_disabled(),
             integrations=IntegrationsConfig(
-                mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test")
+                mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test")
             ),
         )
 
@@ -233,7 +233,7 @@ class TestDatasetForStrategy:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             integrations=IntegrationsConfig(
-                mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test")
+                mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test")
             ),
         )
 
@@ -255,7 +255,7 @@ class TestValidateDatasets:
                 ),
                 inference=_inference_cfg_disabled(),
                 integrations=IntegrationsConfig(
-                    mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test")
+                    mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test")
                 ),
             )
 

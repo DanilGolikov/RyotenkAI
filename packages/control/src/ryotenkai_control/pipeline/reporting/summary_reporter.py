@@ -4,9 +4,9 @@ Extracted from PipelineOrchestrator. All four methods run only after the
 pipeline finishes, so they operate purely on the final state + MLflow run
 tree — they never touch the main execution loop.
 
-The reporter holds only the immutable config. Context and MLflow manager
-are passed in on each call so the orchestrator stays the single owner of
-that mutable state.
+The reporter holds only the immutable config. Context and MLflow tracking
+URI are passed in on each call so the orchestrator stays the single owner
+of that mutable state.
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ from ryotenkai_shared.utils.logger import console, get_run_log_dir, logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
     from ryotenkai_shared.config import PipelineConfig
 
 
@@ -217,7 +216,7 @@ class ExecutionSummaryReporter:
     def aggregate_training_metrics(
         self,
         *,
-        mlflow_manager: IMLflowManager | None,
+        tracking_uri: str | None,
         collect_fn: Callable[[], list[dict[str, float]]] | None = None,
     ) -> None:
         """Aggregate training metrics from child/grandchild runs into the parent run.
@@ -227,12 +226,15 @@ class ExecutionSummaryReporter:
 
         ``collect_fn`` lets callers (orchestrator) inject their own collector,
         which keeps the existing test seams that patch the orchestrator method.
+
+        :param tracking_uri: Active MLflow tracking URI. ``None`` short-circuits
+            (no MLflow configured).
         """
-        if mlflow_manager is None:
+        if not tracking_uri:
             return
         if collect_fn is None:
             all_phase_metrics = self.collect_descendant_metrics(
-                mlflow_manager=mlflow_manager, max_depth=2
+                tracking_uri=tracking_uri, max_depth=2,
             )
         else:
             all_phase_metrics = collect_fn()
@@ -268,77 +270,71 @@ class ExecutionSummaryReporter:
         if total_runtime > 0:
             aggregated_metrics["total_train_runtime"] = total_runtime
 
+        # The aggregated metrics are computed; emission to the parent
+        # MLflow run is handled by the orchestrator's narrow transport
+        # path. This method's contract was simplified to *compute* only —
+        # the caller logs via :class:`MlflowTransport` outside the
+        # reporter. We keep the logger lines for parity with the legacy
+        # behaviour.
         if aggregated_metrics:
-            mlflow_manager.log_metrics(aggregated_metrics)
-            logger.info(f"[METRICS] Aggregated {len(aggregated_metrics)} metrics to parent run")
+            logger.info(f"[METRICS] Aggregated {len(aggregated_metrics)} metrics")
             if final_loss:
                 logger.info(f"[METRICS] Final train_loss: {final_loss:.4f}")
 
     @staticmethod
     def collect_descendant_metrics(
         *,
-        mlflow_manager: IMLflowManager | None,
+        tracking_uri: str | None,
         max_depth: int = 2,
         run_query: MlflowReadClient | None = None,
+        parent_run_id: str | None = None,
     ) -> list[dict[str, float]]:
         """Collect metrics from descendant runs whose name starts with ``phase_``.
 
-        Phase M3.B: traversal is delegated to :class:`RunTreeWalker`
-        (which depends solely on :class:`IRunQuery`). Per-run metric
-        data is still fetched via ``mlflow_manager.client`` because
-        :class:`RunHandle` does not carry the metric bag — the walker
-        gives us the parent/child topology and we round-trip once per
-        descendant to load metrics. ``run_query`` is the DI'd
-        :class:`MlflowReadClient` used for the BFS topology; when
-        omitted, the function lazily builds one from
-        ``mlflow_manager.tracking_uri`` so legacy callers don't have to
-        thread a new argument.
+        Traversal is delegated to :class:`RunTreeWalker` (which depends
+        solely on :class:`IRunQuery`). Per-run metric data is fetched via
+        the underlying ``MlflowClient`` because :class:`RunHandle` does
+        not carry the metric bag — the walker gives us the parent/child
+        topology and we round-trip once per descendant to load metrics.
+
+        :param tracking_uri: Active MLflow tracking URI. ``None`` returns
+            an empty list (no MLflow configured).
+        :param run_query: Optional DI'd :class:`MlflowReadClient`. When
+            omitted the function lazily builds one from ``tracking_uri``.
+        :param parent_run_id: Root run id to walk; ``None`` returns an
+            empty list (caller must supply once MLflow runs are open).
         """
-        if mlflow_manager is None:
+        if not tracking_uri or not parent_run_id:
             return []
 
         try:
-            parent_run_id = _get_run_id(mlflow_manager)
-            if not parent_run_id:
-                return []
-
-            # Resolve the read client used for topology. The metric bag
-            # is still fetched via ``mlflow_manager.client`` because
-            # ``IRunQuery`` does not expose ``run.data``.
             effective_run_query = run_query
             if effective_run_query is None:
-                tracking_uri = getattr(mlflow_manager, "tracking_uri", "") or ""
-                if tracking_uri:
-                    try:
-                        effective_run_query = MlflowReadClient(tracking_uri=tracking_uri)
-                    except Exception as exc:  # noqa: BLE001 — fall back below
-                        logger.debug(
-                            "[METRICS] MlflowReadClient construction failed: %s",
-                            exc,
-                        )
-
-            client = mlflow_manager.client
-            if effective_run_query is None:
-                # No read client available — fall back to the legacy
-                # manager-driven BFS so collection still works for
-                # contexts where the manager carries no URI (mock-only
-                # tests, in-process fakes).
-                return _legacy_collect_descendant_metrics(
-                    client, parent_run_id, max_depth
-                )
+                try:
+                    effective_run_query = MlflowReadClient(tracking_uri=tracking_uri)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "[METRICS] MlflowReadClient construction failed: %s",
+                        exc,
+                    )
+                    return []
 
             walker = RunTreeWalker(effective_run_query)
             try:
                 handles = walker.flat_descendants(parent_run_id)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[METRICS] Tree walk failed: %s", exc)
-                return _legacy_collect_descendant_metrics(
-                    client, parent_run_id, max_depth
-                )
+                return []
 
             # Record per-id depth so we can apply ``max_depth``.
             depth_by_id: dict[str, int] = {}
             _record_depth(walker.walk(parent_run_id), 0, depth_by_id)
+
+            # Build a raw MlflowClient for the metric bag read (RunHandle
+            # has no metric data). Lazy import keeps imports clean.
+            from mlflow import MlflowClient  # noqa: PLC0415 — local import
+
+            client = MlflowClient(tracking_uri=tracking_uri)
 
             phase_metrics: list[dict[str, float]] = []
             for handle in handles:
@@ -376,7 +372,7 @@ class ExecutionSummaryReporter:
     def generate_experiment_report(
         *,
         run_id: str | None,
-        mlflow_manager: IMLflowManager | None,
+        tracking_uri: str | None,
         sections: Sequence[str] | None = None,
     ) -> None:
         """Generate a full experiment Markdown report after pipeline completion.
@@ -384,16 +380,17 @@ class ExecutionSummaryReporter:
         ``sections`` is the ordered list of report plugin ids to render,
         threaded from ``PipelineConfig.reports.sections``. ``None`` falls
         back to ``DEFAULT_REPORT_SECTIONS``.
+
+        :param tracking_uri: Active MLflow tracking URI. ``None`` is treated
+            as an empty string (``ExperimentReportGenerator`` tolerates it).
         """
         if not run_id:
             logger.warning("[REPORT] Cannot generate report: no run_id provided")
             return
         try:
-            # Use the public tracking_uri accessor instead of reaching into _gateway.
-            tracking_uri = (mlflow_manager.tracking_uri or "") if mlflow_manager else ""
             local_logs_dir = get_run_log_dir()
             logger.info(f"[REPORT] Generating experiment report for run {run_id[:8]}...")
-            generator = ExperimentReportGenerator(tracking_uri, sections=sections)
+            generator = ExperimentReportGenerator(tracking_uri or "", sections=sections)
             report = generator.generate(run_id=run_id, local_logs_dir=local_logs_dir)
             logger.info(f"[REPORT] Report generated ({len(report)} chars)")
             logger.info(f"[REPORT] Saved to: {local_logs_dir / 'experiment_report.md'}")
@@ -401,63 +398,11 @@ class ExecutionSummaryReporter:
             logger.warning(f"[REPORT] Failed to generate report: {e}")
 
 
-def _get_run_id(mlflow_manager: IMLflowManager) -> str | None:
-    run_id = getattr(mlflow_manager, "run_id", None)
-    if isinstance(run_id, str) and run_id:
-        return run_id
-    legacy_run_id = getattr(mlflow_manager, "_run_id", None)
-    if isinstance(legacy_run_id, str) and legacy_run_id:
-        return legacy_run_id
-    return None
-
-
 def _record_depth(node: Any, depth: int, into: dict[str, int]) -> None:
     """Stamp ``depth`` for every :class:`RunNode` reachable from ``node``."""
     into[node.handle.run_id] = depth
     for child in node.children:
         _record_depth(child, depth + 1, into)
-
-
-def _legacy_collect_descendant_metrics(
-    client: Any,
-    parent_run_id: str,
-    max_depth: int,
-) -> list[dict[str, float]]:
-    """Fallback BFS path used when no :class:`MlflowReadClient` is
-    available. Mirrors the pre-M3.B behaviour bit-for-bit so callers
-    that only have an ``IMLflowManager`` with ``.client`` (and no URI)
-    keep collecting metrics.
-    """
-    from collections import deque  # noqa: PLC0415 — fallback only
-
-    run = client.get_run(parent_run_id)
-    experiment_id = run.info.experiment_id
-
-    phase_metrics: list[dict[str, float]] = []
-    visited: set[str] = set()
-    # ``deque.popleft`` is O(1); ``list.pop(0)`` is O(n).
-    bfs_queue: deque[tuple[str, int]] = deque([(parent_run_id, 0)])
-    while bfs_queue:
-        current_id, depth = bfs_queue.popleft()
-        if current_id in visited or depth > max_depth:
-            continue
-        visited.add(current_id)
-        children = client.search_runs(
-            experiment_ids=[experiment_id],
-            filter_string=f"tags.`mlflow.parentRunId` = '{current_id}'",
-        )
-        for child in children:
-            child_name = getattr(child.info, "run_name", "") or ""
-            if child_name.startswith("phase_"):
-                metrics = dict(getattr(child.data, "metrics", {}) or {})
-                if metrics:
-                    phase_metrics.append(metrics)
-                    logger.debug(
-                        f"[METRICS] Found phase run: {child_name} ({len(metrics)} metrics)"
-                    )
-            if depth + 1 <= max_depth:
-                bfs_queue.append((child.info.run_id, depth + 1))
-    return phase_metrics
 
 
 __all__ = ["ExecutionSummaryReporter"]

@@ -1,7 +1,7 @@
 """Sentinel: запрещаем mock над Protocol-интерфейсами в greenfield ``tests/``.
 
 Greenfield-директория — никаких legacy-исключений. Если кто-то попытается
-обмокать ``IMLflowManager``/``IPodLifecycleClient``/etc., тест падает.
+обмокать ``IPodLifecycleClient`` / ``IRunPodAPI`` / etc., тест падает.
 Legacy ``packages/<pkg>/tests/`` сюда не попадает по построению.
 
 The set of Protocol names is discovered dynamically by walking
@@ -226,24 +226,24 @@ def test_sentinel_detects_synthetic_violation(tmp_path: Path) -> None:
     bad = fake_root / "test_bad.py"
     bad.write_text(
         "from unittest.mock import patch\n"
-        "@patch('ryotenkai_shared.infrastructure.mlflow.protocol.IMLflowManager')\n"
+        "@patch('ryotenkai_shared.infrastructure.lifecycle.IPodLifecycleClient')\n"
         "def test_x(_): pass\n",
         encoding="utf-8",
     )
     tree = ast.parse(bad.read_text(encoding="utf-8"))
     found = _collect_violations(tree, bad)
-    assert any("IMLflowManager" in v for v in found), found
+    assert any("IPodLifecycleClient" in v for v in found), found
 
     bad2 = fake_root / "test_bad2.py"
     bad2.write_text(
         "from unittest.mock import MagicMock\n"
-        "class IMLflowManager: pass\n"
-        "_ = MagicMock(spec=IMLflowManager)\n",
+        "class IPodLifecycleClient: pass\n"
+        "_ = MagicMock(spec=IPodLifecycleClient)\n",
         encoding="utf-8",
     )
     tree2 = ast.parse(bad2.read_text(encoding="utf-8"))
     found2 = _collect_violations(tree2, bad2)
-    assert any("MagicMock(spec=IMLflowManager)" in v for v in found2), found2
+    assert any("MagicMock(spec=IPodLifecycleClient)" in v for v in found2), found2
 
 
 def test_sentinel_dynamically_discovers_protocols() -> None:
@@ -255,7 +255,6 @@ def test_sentinel_dynamically_discovers_protocols() -> None:
     """
     discovered = _discover_protocols()
     expected_baseline = {
-        "IMLflowManager",
         "IPodLifecycleClient",
         "IRunPodAPI",
         "ITrainerSpawner",

@@ -111,9 +111,9 @@ sentinel enforces this).
 > (documentation, ownership, history, decisions). **Always verify against
 > actual source files before making changes** — the index may be stale.
 
-Last indexed: 2026-05-18 (commit 3ae4ffa). Confidence: 100%.
+Last indexed: 2026-05-18 (commit 06650e2). Confidence: 100%.
 ### Architecture
-repo is a robust, Python-centric monorepo designed to manage complex workflows, likely involving machine learning orchestration, evaluation, and system control. With over 378,000 lines of code across 1,846 files, the project is structured into modular packages that handle distinct responsibilities ranging from community-driven evaluations to core system control and pod management. The repository emphasizes shared utilities and standardized event handling to maintain consistency across its distributed components. The project is primarily built with Python, which accounts for ~78% of the codebase, supported by a TypeScript/JavaScript frontend.
+repo is a comprehensive monorepo designed to manage a complex ecosystem of machine learning orchestration, community-driven evaluation, and service control. With over 386,000 lines of code across 1,895 files, the repository serves as the central hub for the ryotenkai platform. It integrates backend logic, infrastructure management, and a frontend interface to provide a unified development and operational experience for ML workflows. The project is primarily a Python-centric ecosystem supported by a modern web frontend.
 ### Key Modules
 | Module | Purpose | Owner |
 |--------|---------|-------|
@@ -122,8 +122,8 @@ repo is a robust, Python-centric monorepo designed to manage complex workflows, 
 | `scripts` | The scripts module serves as a centralized repository for automation and quality | — |
 | `web` | The web module serves as the frontend configuration and tooling root for the pro | — |
 | `community` | The community module serves as an extensible integration layer for third-party e | — |
-| `packages` | The packages module constitutes the core monorepo structure for the Ryotenkai ec | — |
-| `tests` | The tests module serves as the comprehensive testing suite for the Ryotenkai eco | — |
+| `packages` | The packages module constitutes the core codebase for the RyotenkAI ecosystem, e | — |
+| `tests` | The tests module serves as the comprehensive validation layer for the ryotenkai  | — |
 ### Entry Points
 - `web/src/App.tsx`
 - `src/cli/app.py`

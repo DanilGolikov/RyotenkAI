@@ -22,7 +22,7 @@ from ryotenkai_shared.config import (
     GlobalHyperparametersConfig,
     IntegrationsConfig,
     LoraConfig,
-    MLflowConfig,
+    MLflowProjectConfig,
     ModelConfig,
     PhaseHyperparametersConfig,
     PipelineConfig,
@@ -121,7 +121,7 @@ def _pipeline_cfg(**training_overrides) -> PipelineConfig:
         },
         providers={},
         integrations=IntegrationsConfig(
-            mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test-exp")
+            mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test-exp")
         ),
     )
 
@@ -144,7 +144,7 @@ class TestModelConfig:
 
 class TestMLflowConfig:
     def test_local_tracking_uri_only_is_valid(self) -> None:
-        cfg = MLflowConfig(
+        cfg = MLflowProjectConfig(
             tracking_uri=None,
             local_tracking_uri="http://localhost:5002",
             experiment_name="test-exp",
@@ -153,8 +153,8 @@ class TestMLflowConfig:
         assert cfg.tracking_uri is None
 
     def test_mlflow_requires_at_least_one_tracking_uri(self) -> None:
-        with pytest.raises(ValidationError, match="needs either"):
-            _ = MLflowConfig(
+        with pytest.raises(ValidationError, match="requires at least one"):
+            _ = MLflowProjectConfig(
                 tracking_uri=None,
                 local_tracking_uri=None,
                 experiment_name="test-exp",

@@ -5,8 +5,8 @@ emits. Spread across three processes:
 
 * In-pod runner (Supervisor): ``cancellation_started`` /
   ``cancellation_completed`` from the FSM transitions.
-* Trainer subprocess (CancellationCallback): ``cancellation_finalized``
-  after the on_train_end MLflow flush.
+* Trainer subprocess (TerminalCallback, reason="cancel"):
+  ``cancellation_finalized`` after the on_train_end MLflow flush.
 * Mac control plane (TrainingMonitor): ``mlflow_reconciled_post_sigkill``
   /  ``cleanup_pod_failed`` from reconciliation + cleanup.
 
@@ -77,8 +77,8 @@ CANCELLATION_REQUESTED = "cancellation_requested"
 #:     ``"max_lifetime"`` ...).
 CANCELLATION_STARTED = "cancellation_started"
 
-#: Trainer's :class:`CancellationCallback.on_train_end` finished its
-#: MLflow flush (success OR timed out — distinguished by
+#: Trainer's :class:`TerminalCallback` (reason="cancel") finished its
+#: ``on_train_end`` MLflow flush (success OR timed out -- distinguished by
 #: ``flush_timed_out`` in payload). Carries:
 #:   * ``latency_ms`` — wall time from cancellation_started.
 #:   * ``flushed_count`` — records drained from the resilient buffer.
@@ -95,8 +95,8 @@ CANCELLATION_FINALIZED = "cancellation_finalized"
 #:   * ``exit_code``, ``signal`` — for forensics.
 CANCELLATION_COMPLETED = "cancellation_completed"
 
-#: Trainer's :class:`CompletionCallback.on_train_end` finished its
-#: MLflow flush on the **natural-completion** path (Phase 11.A) —
+#: Trainer's :class:`TerminalCallback` (reason="complete") finished its
+#: ``on_train_end`` MLflow flush on the **natural-completion** path --
 #: training reached ``max_steps`` / ``num_train_epochs`` without
 #: anyone pressing Stop. Counterpart to
 #: :data:`CANCELLATION_FINALIZED`. Carries:

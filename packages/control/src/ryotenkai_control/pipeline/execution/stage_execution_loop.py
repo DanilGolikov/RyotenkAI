@@ -11,7 +11,7 @@ The orchestrator's job shrinks to:
 
     prepared = launch_preparator.prepare(...)
     # ... wire attempt into controller, fork context, setup MLflow ...
-    return stage_execution_loop.run_attempt(prepared, context, log_layout, mlflow_manager)
+    return stage_execution_loop.run_attempt(prepared, context, log_layout)
 
 The loop knows nothing about config loading, secret resolution, or
 signal-handler registration. It receives its collaborators via ctor and
@@ -100,11 +100,7 @@ if TYPE_CHECKING:
     from ryotenkai_control.pipeline.stages.base import PipelineStage
     from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
     from ryotenkai_control.pipeline.state import AttemptController
-    from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
     from ryotenkai_shared.utils.logs_layout import LogLayout
-
-_STATUS_FAILED = "failed"
-
 
 def _noop(*_args: Any, **_kwargs: Any) -> None:
     """Default for optional hooks — guarantees the loop never calls ``None()``."""
@@ -209,7 +205,6 @@ class StageExecutionLoop:
         *,
         prepared: PreparedAttempt,
         context: PipelineContext,
-        mlflow_manager: IMLflowManager | None,
         log_layout: LogLayout,
     ) -> PipelineContext:
         """Execute stages ``[start_idx, stop_idx)`` for the prepared attempt.
@@ -320,20 +315,12 @@ class StageExecutionLoop:
                     logger.info(f"Stage {i + 1}/{len(self._stages)}: {stage_name}")
                     logger.info(SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
 
-                    if mlflow_manager:
-                        mlflow_manager.log_stage_start(
-                            stage_name=stage_name,
-                            stage_idx=i,
-                            total_stages=len(self._stages),
-                        )
-
                     try:
                         stage_result = stage.run(context)
                     except RyotenkAIError as stage_exc:
                         stage_duration = time.time() - current_stage_start_time
                         self._handle_stage_failure(
                             context=context,
-                            mlflow_manager=mlflow_manager,
                             stage_name=stage_name,
                             stage_idx=i,
                             stage_exc=stage_exc,
@@ -378,7 +365,6 @@ class StageExecutionLoop:
 
                     self._handle_stage_success(
                         context=context,
-                        mlflow_manager=mlflow_manager,
                         stage_name=stage_name,
                         stage_idx=i,
                         collector=collector,
@@ -393,7 +379,6 @@ class StageExecutionLoop:
             self._finalize_successful_run(
                 context=context,
                 pipeline_duration=pipeline_duration,
-                mlflow_manager=mlflow_manager,
             )
             return context
 
@@ -405,7 +390,6 @@ class StageExecutionLoop:
         except (KeyboardInterrupt, SystemExit) as exc:
             is_system_exit = isinstance(exc, SystemExit)
             self._handle_interrupt(
-                mlflow_manager=mlflow_manager,
                 current_stage_name=current_stage_name,
                 current_stage_started_at=current_stage_started_at,
             )
@@ -422,7 +406,7 @@ class StageExecutionLoop:
                 cause=exc,
             ) from exc
         except Exception as exc:
-            self._handle_unexpected_error(exc, mlflow_manager=mlflow_manager)
+            self._handle_unexpected_error(exc)
             raise InternalError(
                 detail=f"Unexpected error: {exc!s}",
                 context={
@@ -436,11 +420,7 @@ class StageExecutionLoop:
     # Public exception helpers (used by the orchestrator outside the loop)
     # ------------------------------------------------------------------
 
-    def handle_interrupt_outside_loop(
-        self,
-        *,
-        mlflow_manager: IMLflowManager | None,
-    ) -> None:
+    def handle_interrupt_outside_loop(self) -> None:
         """Mark the (non-started) attempt interrupted when KBI is raised
         during ``_prepare_stateful_attempt`` — i.e. before the loop gets a
         chance to own the exception boundary.
@@ -449,7 +429,6 @@ class StageExecutionLoop:
         context (no stage was running).
         """
         self._handle_interrupt(
-            mlflow_manager=mlflow_manager,
             current_stage_name=None,
             current_stage_started_at=None,
         )
@@ -457,8 +436,6 @@ class StageExecutionLoop:
     def handle_unexpected_error_outside_loop(
         self,
         e: Exception,
-        *,
-        mlflow_manager: IMLflowManager | None,
     ) -> RyotenkAIError:
         """Record + return a typed :class:`RyotenkAIError` for a non-loop exception.
 
@@ -467,7 +444,7 @@ class StageExecutionLoop:
         recording logic as in-loop handling for consistency, then returns
         a typed exception the orchestrator can wrap or raise as needed.
         """
-        self._handle_unexpected_error(e, mlflow_manager=mlflow_manager)
+        self._handle_unexpected_error(e)
         return InternalError(
             detail=f"Unexpected error: {e!s}",
             context={
@@ -485,7 +462,6 @@ class StageExecutionLoop:
         self,
         *,
         context: PipelineContext,
-        mlflow_manager: IMLflowManager | None,
         stage_name: str,
         stage_idx: int,
         stage_exc: RyotenkAIError,
@@ -504,10 +480,6 @@ class StageExecutionLoop:
         error_message = stage_exc.detail or str(stage_exc)
         logger.error(f"Pipeline failed at stage {stage_idx + 1}: {stage_name}")
         logger.error(f"Error: {error_message}")
-        if mlflow_manager:
-            mlflow_manager.log_stage_failed(
-                stage_name=stage_name, stage_idx=stage_idx, error=error_message
-            )
         if collector and not collector.is_flushed:
             if stage_name == StageNames.DATASET_VALIDATOR:
                 self._validation_artifact_mgr.flush_validation_artifact(
@@ -574,14 +546,13 @@ class StageExecutionLoop:
         self,
         *,
         context: PipelineContext,
-        mlflow_manager: IMLflowManager | None,
         stage_name: str,
         stage_idx: int,
         collector: StageArtifactCollector | None,
         started_at: str,
         duration_seconds: float,
     ) -> None:
-        """Flush artifacts, log MLflow completion, record COMPLETED or SKIPPED."""
+        """Flush artifacts, record COMPLETED or SKIPPED."""
         outputs = self._context_propagator.extract_restart_outputs(
             context=context, stage_name=stage_name
         )
@@ -603,18 +574,6 @@ class StageExecutionLoop:
                     duration_seconds=duration_seconds,
                     context=context,
                 )
-
-        if mlflow_manager:
-            self._stage_info_logger.log(
-                mlflow_manager=mlflow_manager,
-                context=context,
-                stage_name=stage_name,
-            )
-            mlflow_manager.log_stage_complete(
-                stage_name=stage_name,
-                stage_idx=stage_idx,
-                duration_seconds=duration_seconds,
-            )
 
         if skip_reason is not None:
             self._attempt_controller.record_skipped(
@@ -653,9 +612,8 @@ class StageExecutionLoop:
         *,
         context: PipelineContext,
         pipeline_duration: float,
-        mlflow_manager: IMLflowManager | None,
     ) -> None:
-        """Terminal happy path: mark attempt COMPLETED, emit summary + MLflow."""
+        """Terminal happy path: mark attempt COMPLETED, emit summary."""
         self._attempt_controller.finalize(
             status=StageRunState.STATUS_COMPLETED,
             completed_at=utc_now_iso(),
@@ -665,14 +623,6 @@ class StageExecutionLoop:
         logger.info("Pipeline completed successfully!")
         logger.info(SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
 
-        if mlflow_manager:
-            # Phase 7: ``log_event_complete`` removed. The pipeline
-            # lifecycle is captured via :class:`RunCompletedEvent` on
-            # the typed journal; tag + duration param are still set so
-            # downstream MLflow UI views don't regress.
-            mlflow_manager.set_tags({"pipeline.status": "completed"})
-            mlflow_manager.log_params({"pipeline.duration_seconds": pipeline_duration})
-
         # Summary printing reads the live context — context is a PipelineContext
         # which is dict-compatible, so summary_reporter gets its data straight
         # from the stage execution surface.
@@ -681,7 +631,6 @@ class StageExecutionLoop:
     def _handle_interrupt(
         self,
         *,
-        mlflow_manager: IMLflowManager | None,
         current_stage_name: str | None,
         current_stage_started_at: str | None,
     ) -> None:
@@ -703,20 +652,12 @@ class StageExecutionLoop:
                     status=StageRunState.STATUS_INTERRUPTED,
                     completed_at=completed_at,
                 )
-        if mlflow_manager:
-            # Phase 7: ``log_event_warning`` removed. The pipeline-
-            # interrupt signal is recorded as :class:`RunCancelledEvent`
-            # on the typed journal; the MLflow tag below is retained
-            # for backward compat with existing UI filters.
-            mlflow_manager.set_tags({"pipeline.status": "interrupted"})
 
     def _handle_unexpected_error(
         self,
         e: Exception,
-        *,
-        mlflow_manager: IMLflowManager | None,
     ) -> None:
-        """Mark attempt FAILED on an unexpected exception and emit MLflow signal.
+        """Mark attempt FAILED on an unexpected exception.
 
         The caller (loop's outer except, or
         :meth:`handle_unexpected_error_outside_loop`) raises a typed
@@ -748,12 +689,6 @@ class StageExecutionLoop:
                 status=StageRunState.STATUS_FAILED,
                 completed_at=completed_at,
             )
-        if mlflow_manager:
-            # Phase 7: ``log_event_error`` removed. Unexpected errors
-            # are recorded as :class:`RunFailedEvent` on the typed
-            # journal; the MLflow tag below is retained for legacy
-            # consumers.
-            mlflow_manager.set_tags({"pipeline.status": _STATUS_FAILED})
 
     # ------------------------------------------------------------------
     # Helpers

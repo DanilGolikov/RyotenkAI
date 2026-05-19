@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
+    from ryotenkai_pod.trainer.container import IDatasetLoader, IStrategyFactory, ITrainerFactory
     from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
     from ryotenkai_pod.trainer.orchestrator.metrics_collector import MetricsCollector
     from ryotenkai_pod.trainer.orchestrator.shutdown_handler import ShutdownHandler
@@ -122,7 +122,6 @@ class PhaseExecutor:
         shutdown_handler: ShutdownHandler | None = None,
         strategy_factory: IStrategyFactory | None = None,
         trainer_factory: ITrainerFactory | None = None,
-        mlflow_manager: IMLflowManager | None = None,
         # DI for sub-components (useful in tests)
         cache_manager: AdapterCacheManager | None = None,
         mlflow_logger: MlflowPhaseLogger | None = None,
@@ -131,11 +130,10 @@ class PhaseExecutor:
         self.tokenizer = tokenizer
         self.config = config
         self.shutdown_handler = shutdown_handler
-        self._mlflow_manager: IMLflowManager | None = mlflow_manager
 
         # Sub-components (injected or built from args)
         self._cache_manager: AdapterCacheManager = cache_manager or AdapterCacheManager(config)
-        self._mlflow_logger: MlflowPhaseLogger = mlflow_logger or MlflowPhaseLogger(mlflow_manager, config)
+        self._mlflow_logger: MlflowPhaseLogger = mlflow_logger or MlflowPhaseLogger(config)
         self._training_runner: PhaseTrainingRunner = training_runner or PhaseTrainingRunner(
             tokenizer=tokenizer,
             config=config,
@@ -143,7 +141,6 @@ class PhaseExecutor:
             dataset_loader=dataset_loader,
             metrics_collector=metrics_collector,
             trainer_factory=trainer_factory,
-            mlflow_manager=mlflow_manager,
             shutdown_handler=shutdown_handler,
         )
 
@@ -168,8 +165,7 @@ class PhaseExecutor:
         logger.debug(
             f"[PE:INIT] PhaseExecutor initialized "
             f"(sf_injected={strategy_factory is not None}, tf_injected={trainer_factory is not None}, "
-            f"dl_type={type(dataset_loader).__name__}, shutdown_handler={shutdown_handler is not None}, "
-            f"mlflow={mlflow_manager is not None})"
+            f"dl_type={type(dataset_loader).__name__}, shutdown_handler={shutdown_handler is not None})"
         )
 
     # ------------------------------------------------------------------

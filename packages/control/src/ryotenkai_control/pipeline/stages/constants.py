@@ -52,13 +52,11 @@ class PipelineContextKeys(StrEnum):
 
     Example:
         run = context.get(PipelineContextKeys.RUN)
-        context[PipelineContextKeys.MLFLOW_MANAGER] = manager
     """
 
     RUN = "run"
     CONFIG_PATH = "config_path"
     MLFLOW_PARENT_RUN_ID = "mlflow_parent_run_id"
-    MLFLOW_MANAGER = "mlflow_manager"
     DOCKER_IMAGE_SHA = "docker_image_sha"
     LOGICAL_RUN_ID = "logical_run_id"
     ATTEMPT_ID = "attempt_id"

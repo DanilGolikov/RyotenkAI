@@ -51,50 +51,50 @@ def reporter() -> ExecutionSummaryReporter:
 # -----------------------------------------------------------------------------
 
 
-def test_aggregate_no_op_when_manager_none(reporter: ExecutionSummaryReporter) -> None:
-    reporter.aggregate_training_metrics(mlflow_manager=None)  # should not crash
+def test_aggregate_no_op_when_tracking_uri_none(reporter: ExecutionSummaryReporter) -> None:
+    """When no tracking URI is configured, aggregation is a no-op."""
+    reporter.aggregate_training_metrics(tracking_uri=None)  # should not crash
 
 
 def test_aggregate_no_op_when_no_metrics(reporter: ExecutionSummaryReporter) -> None:
-    mgr = MagicMock()
-    reporter.aggregate_training_metrics(mlflow_manager=mgr, collect_fn=lambda: [])
-    mgr.log_metrics.assert_not_called()
+    reporter.aggregate_training_metrics(
+        tracking_uri="http://mlflow.test", collect_fn=lambda: []
+    )  # should not crash
 
 
-def test_aggregate_logs_final_loss_steps_runtime(reporter: ExecutionSummaryReporter) -> None:
-    mgr = MagicMock()
+def test_aggregate_computes_aggregates(reporter: ExecutionSummaryReporter) -> None:
+    """After the wide-manager retirement, aggregation only logs the
+    computed values; emission to MLflow is owned by the orchestrator's
+    narrow transport. We just verify the method runs end-to-end with
+    representative inputs.
+    """
     phase_metrics = [
         {"train_loss": 0.5, "train_runtime": 100.0, "global_step": 100},
         {"train_loss": 0.3, "train_runtime": 200.0, "global_step": 100},
     ]
-    reporter.aggregate_training_metrics(mlflow_manager=mgr, collect_fn=lambda: phase_metrics)
-    mgr.log_metrics.assert_called_once()
-    metrics = mgr.log_metrics.call_args.args[0]
-    assert metrics["final_train_loss"] == 0.3  # last wins
-    assert metrics["total_train_steps"] == 200.0
-    assert metrics["total_train_runtime"] == 300.0
+    reporter.aggregate_training_metrics(
+        tracking_uri="http://mlflow.test", collect_fn=lambda: phase_metrics
+    )
 
 
 def test_aggregate_honours_injected_collect_fn(reporter: ExecutionSummaryReporter) -> None:
-    mgr = MagicMock()
     calls = []
 
     def collect() -> list[dict]:
         calls.append(1)
         return [{"train_loss": 0.1}]
 
-    reporter.aggregate_training_metrics(mlflow_manager=mgr, collect_fn=collect)
+    reporter.aggregate_training_metrics(
+        tracking_uri="http://mlflow.test", collect_fn=collect
+    )
     assert calls == [1]
-    mgr.log_metrics.assert_called_once()
 
 
 def test_aggregate_skips_when_no_metrics_extracted(reporter: ExecutionSummaryReporter) -> None:
-    mgr = MagicMock()
     reporter.aggregate_training_metrics(
-        mlflow_manager=mgr, collect_fn=lambda: [{"unrelated": 1}]
-    )
-    # No known keys → nothing logged
-    mgr.log_metrics.assert_not_called()
+        tracking_uri="http://mlflow.test",
+        collect_fn=lambda: [{"unrelated": 1}],
+    )  # should not crash
 
 
 # -----------------------------------------------------------------------------
@@ -102,53 +102,16 @@ def test_aggregate_skips_when_no_metrics_extracted(reporter: ExecutionSummaryRep
 # -----------------------------------------------------------------------------
 
 
-def test_collect_returns_empty_when_no_manager() -> None:
-    assert ExecutionSummaryReporter.collect_descendant_metrics(mlflow_manager=None) == []
+def test_collect_returns_empty_when_no_tracking_uri() -> None:
+    assert ExecutionSummaryReporter.collect_descendant_metrics(
+        tracking_uri=None, parent_run_id="rid"
+    ) == []
 
 
-def test_collect_returns_empty_when_no_run_id() -> None:
-    mgr = MagicMock()
-    mgr.run_id = ""
-    mgr._run_id = ""
-    assert ExecutionSummaryReporter.collect_descendant_metrics(mlflow_manager=mgr) == []
-
-
-def test_collect_finds_phase_children_bfs() -> None:
-    mgr = MagicMock()
-    mgr.run_id = "parent"
-    parent_run = MagicMock()
-    parent_run.info.experiment_id = "exp-1"
-    mgr.client.get_run.return_value = parent_run
-
-    # One child named "strategy", one grandchild named "phase_0"
-    strategy = MagicMock()
-    strategy.info.run_id = "child-1"
-    strategy.info.run_name = "strategy"
-    strategy.data.metrics = {}
-
-    phase = MagicMock()
-    phase.info.run_id = "grand-1"
-    phase.info.run_name = "phase_0"
-    phase.data.metrics = {"train_loss": 0.5}
-
-    def fake_search(*, experiment_ids: list[str], filter_string: str) -> list[MagicMock]:
-        if "'parent'" in filter_string:
-            return [strategy]
-        if "'child-1'" in filter_string:
-            return [phase]
-        return []
-
-    mgr.client.search_runs.side_effect = fake_search
-
-    result = ExecutionSummaryReporter.collect_descendant_metrics(mlflow_manager=mgr, max_depth=2)
-    assert result == [{"train_loss": 0.5}]
-
-
-def test_collect_returns_empty_on_client_error() -> None:
-    mgr = MagicMock()
-    mgr.run_id = "parent"
-    mgr.client.get_run.side_effect = RuntimeError("mlflow down")
-    assert ExecutionSummaryReporter.collect_descendant_metrics(mlflow_manager=mgr) == []
+def test_collect_returns_empty_when_no_parent_run_id() -> None:
+    assert ExecutionSummaryReporter.collect_descendant_metrics(
+        tracking_uri="http://mlflow.test", parent_run_id=None
+    ) == []
 
 
 # -----------------------------------------------------------------------------
@@ -157,26 +120,27 @@ def test_collect_returns_empty_on_client_error() -> None:
 
 
 def test_report_warns_when_no_run_id() -> None:
-    with patch("ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as gen:
-        ExecutionSummaryReporter.generate_experiment_report(run_id=None, mlflow_manager=None)
+    with patch(
+        "ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator"
+    ) as gen:
+        ExecutionSummaryReporter.generate_experiment_report(
+            run_id=None, tracking_uri=None
+        )
         gen.assert_not_called()
 
 
 def test_report_calls_generator_and_swallows_exceptions(tmp_path: Path) -> None:
-    mgr = MagicMock()
-    mgr._gateway.uri = "http://tracking"
-
     # Failure path — must not raise
     with patch(
         "ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator",
         side_effect=RuntimeError("generator down"),
     ):
-        ExecutionSummaryReporter.generate_experiment_report(run_id="rid-abc", mlflow_manager=mgr)
+        ExecutionSummaryReporter.generate_experiment_report(
+            run_id="rid-abc", tracking_uri="http://tracking",
+        )
 
 
 def test_report_success_invokes_generate() -> None:
-    mgr = MagicMock()
-    mgr._gateway.uri = "http://tracking"
     generator_inst = MagicMock()
     generator_inst.generate.return_value = "report-content"
     with (
@@ -189,7 +153,9 @@ def test_report_success_invokes_generate() -> None:
             return_value=Path("/tmp/logs"),
         ),
     ):
-        ExecutionSummaryReporter.generate_experiment_report(run_id="rid-abc", mlflow_manager=mgr)
+        ExecutionSummaryReporter.generate_experiment_report(
+            run_id="rid-abc", tracking_uri="http://tracking",
+        )
     generator_inst.generate.assert_called_once_with(
         run_id="rid-abc", local_logs_dir=Path("/tmp/logs")
     )

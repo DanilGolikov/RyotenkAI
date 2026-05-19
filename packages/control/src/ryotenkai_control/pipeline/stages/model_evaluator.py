@@ -313,7 +313,10 @@ class ModelEvaluator(PipelineStage):
         from pydantic import BaseModel
 
         from ryotenkai_shared.config.inference.common import InferenceLLMConfig
-        from ryotenkai_shared.infrastructure.mlflow.system_prompt import SystemPromptLoader
+        from ryotenkai_shared.inference.prompts import SystemPromptLoader
+        from ryotenkai_shared.infrastructure.mlflow.prompt_registry import (
+            MlflowPromptRegistry,
+        )
 
         # Provider block may be a typed Pydantic schema (post validator)
         # or a raw dict (modular runtime / tests).
@@ -335,13 +338,27 @@ class ModelEvaluator(PipelineStage):
             return None
 
         mlflow_cfg = getattr(getattr(self.config, "integrations", None), "mlflow", None)
+        tracking_uri = (
+            getattr(mlflow_cfg, "tracking_uri", None)
+            or getattr(mlflow_cfg, "local_tracking_uri", None)
+            if mlflow_cfg is not None
+            else None
+        )
 
-        # Use gateway from mlflow_manager when available (provides timeout + URI normalization)
-        mlflow_manager = context.get("mlflow_manager") if context else None
-        gateway = getattr(mlflow_manager, "_gateway", None) if mlflow_manager is not None else None
+        if not tracking_uri or not llm_cfg.system_prompt_mlflow_name:
+            # File-only or no source configured -- skip the registry.
+            registry = None
+        else:
+            try:
+                registry = MlflowPromptRegistry(tracking_uri=tracking_uri)
+            except ValueError as exc:
+                logger.error(f"[EVAL] MlflowPromptRegistry init failed: {exc}")
+                registry = None
+
+        loader = SystemPromptLoader(registry=registry)
 
         try:
-            result = SystemPromptLoader.load(llm_cfg, mlflow_cfg=mlflow_cfg, gateway=gateway)
+            result = loader.load(llm_cfg, on_mlflow_failure="warn")
         except ValueError as exc:
             logger.error(f"[EVAL] System prompt configuration error: {exc}")
             return None

@@ -18,11 +18,6 @@ from typing import TYPE_CHECKING, Any
 
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from ryotenkai_pod.trainer.constants import (
-    TAG_PHASE_IDX,
-    TAG_STRATEGY_TYPE,
-    TRUNCATE_ERROR_MSG,
-)
 from ryotenkai_pod.trainer.memory_manager import MemoryManager, OOMRecoverableError
 from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
 from ryotenkai_shared.errors import (
@@ -35,7 +30,7 @@ from ryotenkai_shared.utils.logger import logger
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, ITrainerFactory
+    from ryotenkai_pod.trainer.container import IDatasetLoader, ITrainerFactory
     from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
     from ryotenkai_pod.trainer.orchestrator.shutdown_handler import ShutdownHandler
     from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
@@ -75,7 +70,6 @@ class PhaseTrainingRunner:
         dataset_loader: IDatasetLoader,
         metrics_collector: Any,
         trainer_factory: ITrainerFactory | None = None,
-        mlflow_manager: IMLflowManager | None = None,
         shutdown_handler: ShutdownHandler | None = None,
     ) -> None:
         self.tokenizer = tokenizer
@@ -83,7 +77,6 @@ class PhaseTrainingRunner:
         self.memory_manager = memory_manager
         self.dataset_loader: IDatasetLoader = dataset_loader
         self.metrics_collector = metrics_collector
-        self._mlflow_manager = mlflow_manager
         self.shutdown_handler = shutdown_handler
 
         self.trainer_factory: ITrainerFactory = trainer_factory if trainer_factory is not None else TrainerFactory()
@@ -181,11 +174,9 @@ class PhaseTrainingRunner:
             raise
 
         except OOMRecoverableError as e:
-            if self._mlflow_manager:
-                self._mlflow_manager.log_oom(
-                    operation=f"phase_{phase_idx}_{phase.strategy_type}",
-                    free_mb=None,
-                )
+            # Legacy wide manager logged ``log_oom`` here; the OOM is
+            # now captured via :class:`TrainingFailedEvent` on the typed
+            # journal (see ``handle_error`` below).
             self.handle_error(buffer, phase_idx, "OOM", e)
 
         except ValueError as e:
@@ -285,7 +276,6 @@ class PhaseTrainingRunner:
                 output_dir=kwargs.get("output_dir"),
                 eval_dataset=kwargs.get("eval_dataset"),
                 config=_self.config,
-                mlflow_manager=_self._mlflow_manager,
             )
 
         trainer = protected_create(
@@ -356,43 +346,16 @@ class PhaseTrainingRunner:
         dataset: Any,
         phase: StrategyPhaseConfig,
     ) -> None:
-        """Log dataset to MLflow with experiment → dataset → run linking."""
-        if self._mlflow_manager is None:
-            return
+        """Log dataset to MLflow (no-op shim after wide-manager retirement).
 
-        try:
-            num_samples = len(dataset) if hasattr(dataset, "__len__") else 0
-            dataset_name = phase.dataset or f"phase_{phase_idx}_dataset"
-
-            dataset_config = self.config.get_dataset_for_strategy(phase)
-            source_uri = dataset_config.get_source_uri()
-
-            mlflow_dataset = self._mlflow_manager.create_mlflow_dataset(
-                data=dataset,
-                name=dataset_name,
-                source=source_uri,
-            )
-
-            if mlflow_dataset is not None:
-                self._mlflow_manager.log_dataset_input(mlflow_dataset, context="training")
-                logger.debug(
-                    f"[PE:MLFLOW_DATASET_LINKED] name={dataset_name}, source={source_uri}, samples={num_samples}"
-                )
-            else:
-                self._mlflow_manager.log_dataset_info(
-                    name=dataset_name,
-                    source=dataset_config.source.kind,
-                    num_rows=num_samples,
-                    extra_tags={
-                        TAG_PHASE_IDX: str(phase_idx),
-                        TAG_STRATEGY_TYPE: phase.strategy_type,
-                        "dataset.source_uri": source_uri,
-                    },
-                )
-                logger.debug(f"[PE:MLFLOW_DATASET_INFO] name={dataset_name}, samples={num_samples}")
-
-        except Exception as e:
-            logger.debug(f"[PE:MLFLOW_DATASET_LOG_FAILED] {e}")
+        Historical behaviour created an MLflow Dataset object and linked
+        it to the active run via ``IMLflowManager.create_mlflow_dataset``
+        / ``log_dataset_input``. The wide manager has been retired and
+        dataset identity is now carried by config artifacts (logged via
+        :func:`open_attempt_with_coord`) plus the typed
+        :class:`DatasetValidationCompletedEvent` on the journal.
+        """
+        del phase_idx, dataset, phase  # intentional no-op
 
     def handle_graceful_shutdown(
         self,
@@ -475,18 +438,9 @@ class PhaseTrainingRunner:
         logger.exception(error_msg) if error_type == "Unexpected" else logger.error(error_msg)
         buffer.mark_phase_failed(phase_idx, error_msg)
 
-        if self._mlflow_manager:
-            # Phase 7: ``log_event_error`` removed. Phase failures are
-            # captured via :class:`TrainingFailedEvent` on the typed
-            # journal; MLflow tags below stay for legacy filters.
-            self._mlflow_manager.set_tags(
-                {
-                    TAG_PHASE_IDX: str(phase_idx),
-                    "status": "failed",
-                    "error_type": error_type,
-                    "error_msg": error_msg[:TRUNCATE_ERROR_MSG],
-                }
-            )
+        # Phase failures are captured via :class:`TrainingFailedEvent`
+        # on the typed journal — the wide manager's status tag was the
+        # legacy carrier and is now redundant.
 
         if error_type == "OOM":
             raise TrainingOOMError(

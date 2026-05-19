@@ -44,7 +44,6 @@ if TYPE_CHECKING:
     from datasets import Dataset
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from ryotenkai_pod.trainer.mlflow import IMLflowManager
     from ryotenkai_shared.config import (
         GlobalHyperparametersConfig,
         PhaseHyperparametersConfig,
@@ -97,7 +96,6 @@ class TrainerFactory:
         eval_dataset: Dataset | None = None,
         phase_config: StrategyPhaseConfig | None = None,
         ref_model: PreTrainedModel | None = None,
-        mlflow_manager: IMLflowManager | None = None,
         **kwargs: Any,
     ) -> TrainerType:
         """
@@ -127,12 +125,13 @@ class TrainerFactory:
         learning_rate = hp.learning_rate
         num_epochs = hp.epochs
 
-        # Calculate report_to
+        # Calculate report_to. The legacy wide manager used to suppress
+        # the ``"mlflow"`` reporter when the manager wasn't active; the
+        # trainer now joins the parent MLflow run via env vars
+        # (``MLFLOW_RUN_ID``) so we always keep whatever the user
+        # configured. HF's MLflowCallback no-ops when the env var
+        # is absent, so this is safe.
         report_to = config.integrations.get_report_to()
-        if "mlflow" in report_to and mlflow_manager and not mlflow_manager.is_active:
-            report_to = [r for r in report_to if r != "mlflow"]
-            if not report_to:
-                report_to = ["none"]
 
         # Base config kwargs
         config_kwargs = {
@@ -404,95 +403,62 @@ class TrainerFactory:
             runner_event_callback = RunnerEventCallback()
             callbacks.append(runner_event_callback)
 
-            # Phase 9.A — cooperative cancellation.
+            # Terminal-state finalization (cooperative cancellation +
+            # natural completion).
             #
-            # ``CancellationCallback`` polls the global
-            # :class:`ShutdownHandler` flag on each ``on_step_end`` and
-            # turns it into HF's own ``TrainerControl(should_save,
-            # should_training_stop)`` so the trainer saves + exits at
-            # the next checkpoint boundary instead of being SIGKILLed
-            # mid-step. Same activation gate as ``RunnerEventCallback``
-            # — when the supervisor sets ``RYOTENKAI_RUNNER_URL`` we
-            # know we're inside the in-pod runner and stop signals are
-            # meaningful.
+            # The unified ``TerminalCallback`` polls the global
+            # :class:`ShutdownHandler` flag on each ``on_step_end`` (when
+            # reason="cancel") and turns it into HF's own
+            # ``TrainerControl(should_save, should_training_stop)`` so the
+            # trainer saves + exits at the next checkpoint boundary
+            # instead of being SIGKILLed mid-step. Same activation gate
+            # as ``RunnerEventCallback`` -- when the supervisor sets
+            # ``RYOTENKAI_RUNNER_URL`` we know we're inside the in-pod
+            # runner and stop signals are meaningful.
             #
-            # **Inserted at index 0** — BEFORE HF Trainer's
+            # **Inserted at index 0** -- BEFORE HF Trainer's
             # auto-registered MLflow callback. HF MLflow callback owns
             # the final ``end_run()`` on ``on_train_end``; our callback
             # only flips control flags. Order guarantees that on the
             # cancelled step, HF observes ``should_save+should_training_stop``,
             # checkpoints, then HF MLflow callback runs and closes the
-            # run with the correct status (driven by 9.A's
-            # ``executor.py`` finally block which picks ``KILLED`` when
-            # ``handle_graceful_shutdown`` propagated ``TRAINING_INTERRUPTED``).
-            from ryotenkai_pod.trainer.callbacks.cancellation_callback import (
-                CancellationCallback,
+            # run with the correct status.
+            from ryotenkai_pod.trainer.callbacks.terminal_callback import (
+                TerminalCallback,
             )
 
-            # Pass the live ``mlflow_manager`` so the callback's
-            # Phase 9.B ``on_train_end`` can drain the resilient
-            # transport buffer into the same MLflow run HF closes.
-            # ``mlflow_manager`` is bound earlier in this function
-            # (the same one TrainingEventsCallback / GPUMetricsCallback
-            # use). When ``mlflow_config`` is None — tracking
-            # disabled — we still pass it (could be ``None``) and
-            # the callback's flush path becomes a no-op via
-            # ``_resolve_mlflow_manager`` returning None.
+            # Cooperative cancellation + natural completion are now
+            # served by a single :class:`TerminalCallback` parametric on
+            # ``reason`` (post-cleanup merge of the historical
+            # CancellationCallback + CompletionCallback). Both share
+            # the same ``mlflow_manager`` reference (no-op when ``None``)
+            # and the same event publisher channel -- the
+            # ``cancellation_finalized`` / ``completion_finalized``
+            # telemetry kinds are selected internally based on
+            # ``reason``.
             #
-            # Phase 9.C — event_publisher reuses the RunnerEventCallback's
-            # publish path so the cancellation_finalized event rides
-            # the same buffered HTTP loopback channel as every other
-            # trainer-side event. Single PUB → single channel → single
-            # reconciliation surface on the Mac.
-            #
-            # We wrap with ``flush_now=True`` so the cancellation
-            # event lands immediately rather than buffering with the
-            # rest — by the time on_train_end fires, the trainer is
-            # about to exit and the buffer has no further flush
-            # opportunities. Operator visibility wins over micro-
-            # batching here.
-            def _cancellation_event_publisher(
+            # We wrap with ``flush_now=True`` so terminal events land
+            # immediately rather than buffering -- by the time
+            # ``on_train_end`` fires, the trainer is about to exit and
+            # the buffer has no further flush opportunities. Operator
+            # visibility wins over micro-batching here.
+            def _terminal_event_publisher(
                 kind: str, payload: dict[str, Any],
             ) -> None:
                 runner_event_callback._publish(kind, payload, flush_now=True)
 
             callbacks.insert(
                 0,
-                CancellationCallback(
-                    mlflow_manager=mlflow_manager,
-                    event_publisher=_cancellation_event_publisher,
+                TerminalCallback(
+                    reason="cancel",
+                    event_publisher=_terminal_event_publisher,
                 ),
-            )
-
-            # Phase 11.A — natural-completion finalization.
-            #
-            # CompletionCallback mirrors CancellationCallback but for
-            # the happy path (training reaches max_steps /
-            # num_train_epochs naturally). Pre-Phase-11 the resilient
-            # MLflow buffer never flushed on natural exit — records
-            # accumulated during an upstream MLflow flap stayed on the
-            # pod's disk and never reached MLflow if Mac was asleep
-            # when the trainer closed.
-            #
-            # We append at index 1 (right after CancellationCallback,
-            # before the rest of the chain). on_train_end ordering
-            # between Cancellation and Completion doesn't matter — they
-            # are mutually exclusive (Cancellation owns
-            # ``_signalled=True`` path, Completion runs only when that
-            # flag is False).
-            #
-            # Same shared event_publisher channel + same mlflow_manager
-            # so the buffered HTTP loopback already in flight handles
-            # ``completion_finalized`` events identically to
-            # ``cancellation_finalized``.
-            from ryotenkai_pod.trainer.callbacks.completion_callback import (
-                CompletionCallback,
             )
             callbacks.insert(
                 1,
-                CompletionCallback(
-                    mlflow_manager=mlflow_manager,
-                    event_publisher=_cancellation_event_publisher,
+                TerminalCallback(
+                    reason="complete",
+                    event_publisher=_terminal_event_publisher,
                 ),
             )
 
@@ -517,11 +483,17 @@ class TrainerFactory:
         config: PipelineConfig,
         *,
         output_dir: str,
-        mlflow_manager: IMLflowManager | None = None,
         **kwargs: Any,
     ) -> TrainerType:
-        """
-        Create trainer from a strategy phase configuration.
+        """Create trainer from a strategy phase configuration.
+
+        :param phase: phase config describing the strategy.
+        :param model: pre-trained model to fine-tune.
+        :param tokenizer: tokenizer paired with ``model``.
+        :param train_dataset: training split.
+        :param config: pipeline-level config.
+        :param output_dir: directory the trainer should write to.
+        :returns: TRL trainer instance.
         """
         return self.create(
             strategy_type=phase.strategy_type,
@@ -531,7 +503,6 @@ class TrainerFactory:
             config=config,
             output_dir=output_dir,
             phase_config=phase,
-            mlflow_manager=mlflow_manager,
             **kwargs,
         )
 

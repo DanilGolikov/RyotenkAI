@@ -42,7 +42,7 @@ from ryotenkai_shared.utils.logger import logger
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
+    from ryotenkai_pod.trainer.container import IDatasetLoader, IStrategyFactory, ITrainerFactory
     from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
 
 
@@ -81,23 +81,20 @@ class StrategyOrchestrator:
         trainer_factory: ITrainerFactory | None = None,
         dataset_loader: IDatasetLoader | None = None,
         shutdown_handler: ShutdownHandler | None = None,
-        mlflow_manager: IMLflowManager | None = None,
         graceful_shutdown: bool = True,
     ):
-        """
-        Initialize StrategyOrchestrator.
+        """Initialize :class:`StrategyOrchestrator`.
 
-        Args:
-            model: Pre-trained model to fine-tune
-            tokenizer: Tokenizer for the model
-            config: Pipeline configuration
-            memory_manager: Optional custom MemoryManager
-            strategy_factory: Optional StrategyFactory instance (for DI/testing)
-            trainer_factory: Optional TrainerFactory instance (for DI/testing)
-            dataset_loader: Optional IDatasetLoader instance (for DI/testing)
-            shutdown_handler: Optional ShutdownHandler for graceful shutdown
-            mlflow_manager: Optional MLflowManager for experiment tracking
-            graceful_shutdown: If True (default), create ShutdownHandler if not provided
+        :param model: pre-trained model to fine-tune.
+        :param tokenizer: tokenizer for ``model``.
+        :param config: pipeline configuration.
+        :param memory_manager: optional custom :class:`MemoryManager`.
+        :param strategy_factory: optional :class:`IStrategyFactory` (DI/testing).
+        :param trainer_factory: optional :class:`ITrainerFactory` (DI/testing).
+        :param dataset_loader: optional :class:`IDatasetLoader` (DI/testing).
+        :param shutdown_handler: optional :class:`ShutdownHandler` for graceful shutdown.
+        :param graceful_shutdown: if ``True`` (default), create a
+            :class:`ShutdownHandler` when one is not provided.
         """
         self.model = model
         self.tokenizer = tokenizer
@@ -127,10 +124,7 @@ class StrategyOrchestrator:
         else:
             self._shutdown_handler = None
 
-        # MLflow manager: for experiment tracking and event logging (optional)
-        self._mlflow_manager: IMLflowManager | None = mlflow_manager
-
-        # Create DataBuffer callbacks for MLflow integration
+        # Create DataBuffer callbacks for legacy integration hook.
         data_buffer_callbacks = self._create_data_buffer_callbacks()
 
         # Initialize other components
@@ -146,62 +140,28 @@ class StrategyOrchestrator:
             shutdown_handler=self._shutdown_handler,
             strategy_factory=self._strategy_factory,
             trainer_factory=self._trainer_factory,
-            mlflow_manager=self._mlflow_manager,
         )
 
-        self._chain_runner = ChainRunner(
-            self._phase_executor,
-            mlflow_manager=self._mlflow_manager,
-        )
+        self._chain_runner = ChainRunner(self._phase_executor)
 
         logger.debug(
             f"[SO:INIT] StrategyOrchestrator initialized (Facade) "
             f"(sf_injected={strategy_factory is not None}, tf_injected={trainer_factory is not None}, "
             f"dl_injected={dataset_loader is not None}, dl_type={type(self._dataset_loader).__name__}, "
-            f"shutdown_handler={self._shutdown_handler is not None}, "
-            f"mlflow_enabled={self._mlflow_manager is not None})"
+            f"shutdown_handler={self._shutdown_handler is not None})"
         )
         logger.info("StrategyOrchestrator initialized")
 
     def _create_data_buffer_callbacks(self) -> DataBufferEventCallbacks | None:
-        """Create DataBuffer callbacks for MLflow integration."""
-        if self._mlflow_manager is None:
-            return None
+        """Return ``None`` — MLflow-integration callbacks are retired.
 
-        def _on_pipeline_initialized(run_id: str, total_phases: int, strategy_chain: list[str]) -> None:
-            if self._mlflow_manager:
-                self._mlflow_manager.log_pipeline_initialized(run_id, total_phases, strategy_chain)
-
-        def _on_state_saved(run_id: str, path: str) -> None:
-            if self._mlflow_manager:
-                self._mlflow_manager.log_state_saved(run_id, path)
-
-        def _on_phase_started(idx: int, strategy: str) -> None:
-            # Phase 7: per-phase ``log_event_start`` removed. Training
-            # lifecycle is captured via :class:`TrainingStartedEvent` on
-            # the typed journal; per-phase progress is observable through
-            # logger.info + MLflow tags set elsewhere.
-            del idx, strategy  # explicit no-op
-            return
-
-        def _on_phase_completed(idx: int, strategy: str, status: str) -> None:
-            # Phase 7: per-phase ``log_event_complete`` removed. Training
-            # lifecycle is captured via :class:`TrainingCompletedEvent`
-            # on the typed journal.
-            del idx, strategy, status  # explicit no-op
-            return
-
-        def _on_checkpoint_cleanup(cleaned_count: int, freed_mb: int) -> None:
-            if self._mlflow_manager:
-                self._mlflow_manager.log_checkpoint_cleanup(cleaned_count, freed_mb)
-
-        return DataBufferEventCallbacks(
-            on_pipeline_initialized=_on_pipeline_initialized,
-            on_state_saved=_on_state_saved,
-            on_phase_started=_on_phase_started,
-            on_phase_completed=_on_phase_completed,
-            on_checkpoint_cleanup=_on_checkpoint_cleanup,
-        )
+        Historical behaviour wired MLflow event callbacks through
+        :class:`DataBufferEventCallbacks`. After the wide-manager
+        retirement, lifecycle signals flow through the typed event
+        journal and :class:`RunnerEventCallback`; returning ``None``
+        lets :class:`DataBuffer` skip callback wiring entirely.
+        """
+        return None
 
     def run_chain(
         self,

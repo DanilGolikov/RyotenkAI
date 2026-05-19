@@ -35,8 +35,6 @@ if TYPE_CHECKING:
     from ryotenkai_control.reports.domain.entities import ExperimentData
     from ryotenkai_control.reports.domain.interfaces import IExperimentDataProvider
     from ryotenkai_control.reports.models.report import ExperimentReport
-    from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway
-    from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
 
 logger = get_logger(__name__)
 
@@ -50,56 +48,42 @@ class ExperimentReportGenerator:
         self,
         tracking_uri: str | None = None,
         *,
-        gateway: IMLflowGateway | None = None,
         run_query: MlflowReadClient | None = None,
         adapter: IExperimentDataProvider | None = None,
         journal_adapter: JournalReportAdapter | None = None,
-        mlflow_manager: IMLflowManager | None = None,
         plugins: list[IReportBlockPlugin] | None = None,
         sections: Sequence[str] | None = None,
     ):
         """
         Initialize generator.
 
-        Args:
-            tracking_uri:     MLflow tracking URI (legacy, used when gateway is not provided).
-            gateway:          IMLflowGateway instance. Used to derive the URI for the read
-                              client.
-            run_query:        Pre-built :class:`MlflowReadClient`. Phase M3.B preferred
-                              entry point — when provided, no global tracking-URI
-                              mutation is performed.
-            adapter:          MLflow metadata provider (defaults to MLflowAdapter).
-            journal_adapter:  Event-journal provider (defaults to JournalReportAdapter
-                              bound to ``mlflow_manager`` for the artifact fallback path).
-            mlflow_manager:   IMLflowManager used by the journal adapter for the
-                              MLflow-artifact fallback when the workspace journal is
-                              missing. Optional; the adapter degrades to "empty
-                              events" when both are unavailable.
-            plugins:          Ordered list of report block plugins (escape hatch for tests).
-                              If passed, ``sections`` is ignored.
-            sections:         Ordered list of plugin ids to render. ``None`` uses the
-                              built-in default (see ``DEFAULT_REPORT_SECTIONS``).
+        :param tracking_uri: MLflow tracking URI. Required when ``run_query`` is None.
+        :param run_query: Pre-built :class:`MlflowReadClient`. Preferred entry point
+            -- when provided, no global tracking-URI mutation is performed.
+        :param adapter: MLflow metadata provider (defaults to MLflowAdapter).
+        :param journal_adapter: Event-journal provider (defaults to JournalReportAdapter).
+        :param plugins: Ordered list of report block plugins (escape hatch for tests).
+            If passed, ``sections`` is ignored.
+        :param sections: Ordered list of plugin ids to render. ``None`` uses the
+            built-in default (see ``DEFAULT_REPORT_SECTIONS``).
         """
-        # Phase M3.B: construct exactly one MlflowReadClient and route the
-        # underlying client through it. No ``mlflow.set_tracking_uri``
-        # mutation — the read client owns the URI.
+        # Construct exactly one MlflowReadClient and route the underlying
+        # client through it. No ``mlflow.set_tracking_uri`` mutation -- the
+        # read client owns the URI.
         if run_query is not None:
             self._run_query = run_query
             self._tracking_uri = run_query.tracking_uri
-        elif gateway is not None:
-            self._tracking_uri = gateway.uri
-            self._run_query = MlflowReadClient(tracking_uri=gateway.uri)
-        elif tracking_uri is not None:
+        elif tracking_uri:
             self._tracking_uri = tracking_uri
             self._run_query = MlflowReadClient(tracking_uri=tracking_uri)
         else:
             raise ValueError(
-                "One of run_query, gateway, or tracking_uri must be provided"
+                "One of run_query or tracking_uri must be provided"
             )
         self._client = self._run_query.underlying_client
         self._adapter = adapter or MLflowAdapter(run_query=self._run_query)
 
-        self._journal_adapter = journal_adapter or JournalReportAdapter(mlflow_manager=mlflow_manager)
+        self._journal_adapter = journal_adapter or JournalReportAdapter()
 
         if plugins is None:
             catalog.ensure_loaded()

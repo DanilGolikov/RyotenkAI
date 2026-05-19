@@ -63,12 +63,12 @@ _SET_TRACKING_URI_ALLOWLIST: frozenset[str] = frozenset(
         # but does NOT call set_tracking_uri (kept here as a safety
         # belt — the lint flags if a future edit reintroduces it).
         "packages/control/src/ryotenkai_control/pipeline/mlflow/read/client.py",
-        # Legacy modules — deletion path. These are removed in M4; the
-        # allowlist entry keeps the lint green during the migration
-        # window. Remove the entries once the files themselves are gone.
-        "packages/shared/src/ryotenkai_shared/infrastructure/mlflow/environment.py",
-        "packages/shared/src/ryotenkai_shared/infrastructure/mlflow/gateway.py",
-        "packages/pod/src/ryotenkai_pod/trainer/managers/mlflow_manager/setup.py",
+        # Concrete IPromptRegistry implementation -- calls set_tracking_uri
+        # inside a per-request worker so mlflow.genai.load_prompt picks
+        # the right server. Each call is hermetic (no leak across requests).
+        "packages/shared/src/ryotenkai_shared/infrastructure/mlflow/prompt_registry.py",
+        # M7-deletion-backlog: dormant runner-side relay (gated behind
+        # RYOTENKAI_RUNNER_MLFLOW_RELAY=1; default off).
         "packages/pod/src/ryotenkai_pod/runner/mlflow_relay.py",
     }
 )
@@ -80,14 +80,7 @@ _SET_TRACKING_URI_ALLOWLIST: frozenset[str] = frozenset(
 # the wider cascade — :class:`MLflowManager`, the trainer container's
 # lazy MLflowAutologManager init — is unwound in a follow-up phase.
 # Remove the entries when the files themselves are gone.
-_AUTOLOG_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        # M7-deletion-backlog: dormant autolog manager.
-        # TODO(M7-cleanup): delete packages/pod/.../trainer/mlflow/autolog.py
-        # and remove this allowlist entry once MLflowManager is gone.
-        "packages/pod/src/ryotenkai_pod/trainer/mlflow/autolog.py",
-    }
-)
+_AUTOLOG_ALLOWLIST: frozenset[str] = frozenset()
 
 
 # Legacy ``mlflow.start_run`` callsites under ``packages/pod/.../trainer/``
@@ -96,8 +89,6 @@ _AUTOLOG_ALLOWLIST: frozenset[str] = frozenset(
 # ``MLFLOW_RUN_ID`` — but they are still wired into the orchestrator
 # until the wider cascade is unwound.
 _START_RUN_IN_TRAINER_LEGACY_PREFIXES: tuple[str, ...] = (
-    # M4 to-be-removed: god-class MLflowManager (already allowlisted).
-    "packages/pod/src/ryotenkai_pod/trainer/managers/mlflow_manager/",
     # M7-deletion-backlog: phase_executor's nested-run helper.
     # TODO(M7-cleanup): delete
     # packages/pod/.../trainer/orchestrator/phase_executor/mlflow_logger.py
@@ -112,20 +103,20 @@ _MLFLOW_CLIENT_ALLOWLIST: frozenset[str] = frozenset(
         "packages/shared/src/ryotenkai_shared/infrastructure/mlflow/transport.py",
         # Canonical read-path client.
         "packages/control/src/ryotenkai_control/pipeline/mlflow/read/client.py",
-        # Phase M5 — canonical alias-based Model Registry adapter
-        # implementing IModelRegistry. Lazy MlflowClient construction
-        # is gated by the composition root (publisher / CLI promote).
+        # Canonical alias-based Model Registry adapter implementing
+        # IModelRegistry. Lazy MlflowClient construction is gated by the
+        # composition root (publisher / CLI promote).
         "packages/shared/src/ryotenkai_shared/infrastructure/mlflow/registry.py",
-        # Legacy modules — see note above.
-        "packages/shared/src/ryotenkai_shared/infrastructure/mlflow/gateway.py",
-        "packages/pod/src/ryotenkai_pod/trainer/managers/mlflow_manager/manager.py",
-        "packages/pod/src/ryotenkai_pod/trainer/managers/mlflow_manager/setup.py",
+        # Summary reporter -- collects per-phase metric bags via the
+        # underlying ``MlflowClient`` because :class:`RunHandle` (the
+        # narrow read surface) does not expose ``run.data.metrics``.
+        "packages/control/src/ryotenkai_control/pipeline/reporting/summary_reporter.py",
+        # Journal adapter -- downloads ``events/events.jsonl`` artifact
+        # when the workspace copy is missing.
+        "packages/control/src/ryotenkai_control/reports/adapters/journal_adapter.py",
         # M7-deletion-backlog: dormant runner-side relay. Activated only
         # via ``RYOTENKAI_RUNNER_MLFLOW_RELAY=1``; default flow has the
         # trainer talk to MLflow directly through ``MlflowTransport``.
-        # TODO(M7-cleanup): delete packages/pod/.../runner/mlflow_relay.py
-        # together with its wiring in runner/main.py + api/internal.py
-        # + api/deps.py and remove this allowlist entry.
         "packages/pod/src/ryotenkai_pod/runner/mlflow_relay.py",
     }
 )

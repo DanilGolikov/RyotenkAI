@@ -238,11 +238,19 @@ class TestNegative:
                 target.write_bytes(journal_path.read_bytes())
                 return str(target)
 
-        class FakeMlflowManager:
-            client = FakeClient()
+        # After the wide ``IMLflowManager`` retirement, the adapter
+        # constructs an MlflowClient internally from ``tracking_uri``.
+        # Patch the constructor at the import site so the test exercises
+        # the new code path.
+        import mlflow as _mlflow_mod
 
-        adapter = JournalReportAdapter(mlflow_manager=FakeMlflowManager())
-        data = adapter.load(RUN_ID, workspace_dir=tmp_path / "does-not-exist")
+        original_client_cls = _mlflow_mod.MlflowClient
+        try:
+            _mlflow_mod.MlflowClient = lambda **_kwargs: FakeClient()  # type: ignore[assignment]
+            adapter = JournalReportAdapter(tracking_uri="http://mlflow.test")
+            data = adapter.load(RUN_ID, workspace_dir=tmp_path / "does-not-exist")
+        finally:
+            _mlflow_mod.MlflowClient = original_client_cls  # type: ignore[assignment]
 
         assert data.source == "mlflow"
         assert data.total_envelopes == 2
@@ -301,22 +309,25 @@ class TestDependencyErrors:
             def download_artifacts(self, *args, **kwargs):
                 raise RuntimeError("artifact missing")
 
-        class FailingMlflowManager:
-            client = FailingClient()
+        import mlflow as _mlflow_mod
 
-        adapter = JournalReportAdapter(mlflow_manager=FailingMlflowManager())
-        # workspace_dir doesn't exist either
-        data = adapter.load(RUN_ID, workspace_dir=tmp_path / "missing")
+        original_client_cls = _mlflow_mod.MlflowClient
+        try:
+            _mlflow_mod.MlflowClient = lambda **_kwargs: FailingClient()  # type: ignore[assignment]
+            adapter = JournalReportAdapter(tracking_uri="http://mlflow.test")
+            data = adapter.load(RUN_ID, workspace_dir=tmp_path / "missing")
+        finally:
+            _mlflow_mod.MlflowClient = original_client_cls  # type: ignore[assignment]
 
         assert data.source == "empty"
         assert data.timeline_entries == []
         assert data.memory_events == []
 
-    def test_mlflow_manager_without_client_skips_fallback(self, tmp_path: Path) -> None:
-        class NoClientMlflowManager:
-            client = None
-
-        adapter = JournalReportAdapter(mlflow_manager=NoClientMlflowManager())
+    def test_no_tracking_uri_skips_fallback(self, tmp_path: Path) -> None:
+        """When no tracking_uri is configured, the adapter skips the
+        MLflow fallback (no client construction).
+        """
+        adapter = JournalReportAdapter(tracking_uri=None)
         data = adapter.load(RUN_ID, workspace_dir=tmp_path / "missing")
         assert data.source == "empty"
 

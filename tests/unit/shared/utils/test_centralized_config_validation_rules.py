@@ -11,7 +11,7 @@ from ryotenkai_shared.config import (
     GlobalHyperparametersConfig,
     InferenceConfig,
     IntegrationsConfig,
-    MLflowConfig,
+    MLflowProjectConfig,
     ModelConfig,
     PipelineConfig,
     QLoRAConfig,
@@ -72,7 +72,7 @@ def _inference_cfg_disabled() -> InferenceConfig:
 
 def _integrations_cfg() -> IntegrationsConfig:
     return IntegrationsConfig(
-        mlflow=MLflowConfig(tracking_uri="https://test.example.com", experiment_name="test-exp")
+        mlflow=MLflowProjectConfig(tracking_uri="https://test.example.com", experiment_name="test-exp")
     )
 
 

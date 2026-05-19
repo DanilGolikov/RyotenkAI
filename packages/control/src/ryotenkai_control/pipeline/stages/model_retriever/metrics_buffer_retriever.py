@@ -20,8 +20,9 @@ Design constraints
   than the tar-pipeline ``download_directory``. No directory
   semantics needed; one tiny JSONL is faster as plain SCP.
 * **Stage-quiet on missing file** — the typical happy path is
-  "buffer absent" (Phase 11.A's :meth:`CompletionCallback.on_train_end`
-  successfully drained on natural completion). Missing file is NOT
+  "buffer absent" (the unified :class:`TerminalCallback`'s
+  ``on_train_end`` successfully drained on natural completion).
+  Missing file is NOT
   an error; it's the expected outcome for healthy runs.
 
 Caller contract

@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from datasets import Dataset
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from ryotenkai_pod.trainer.mlflow import IMLflowManager  # re-export; canonical home is src/training/mlflow
     from ryotenkai_pod.trainer.orchestrator import StrategyOrchestrator
     from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
     from ryotenkai_pod.trainer.memory_manager import GPUInfo, GPUPreset, MemoryManager, MemoryStats
@@ -191,7 +190,6 @@ class ITrainerFactory(Protocol):
         eval_dataset: Dataset | None = None,
         phase_config: StrategyPhaseConfig | None = None,
         ref_model: PreTrainedModel | None = None,
-        mlflow_manager: IMLflowManager | None = None,
         **kwargs: Any,
     ) -> Any:
         """Create a TRL trainer instance."""
@@ -206,7 +204,6 @@ class ITrainerFactory(Protocol):
         config: PipelineConfig,
         *,
         output_dir: str,
-        mlflow_manager: IMLflowManager | None = None,
         **kwargs: Any,
     ) -> Any:
         """Create trainer from a phase config (supports extra kwargs like eval_dataset)."""
@@ -254,7 +251,6 @@ class TrainingContainer:
     _strategy_factory: IStrategyFactory | None = field(default=None, repr=False)
     _trainer_factory: ITrainerFactory | None = field(default=None, repr=False)
     _dataset_loader: IDatasetLoader | None = field(default=None, repr=False)
-    _mlflow_manager: IMLflowManager | None = field(default=None, repr=False)
 
     # Cache for lazy-initialized dependencies
     _lazy_memory_manager: MemoryManager | None = field(default=None, repr=False)
@@ -269,8 +265,7 @@ class TrainingContainer:
             f"mm_injected={self._memory_manager is not None}, "
             f"sf_injected={self._strategy_factory is not None}, "
             f"tf_injected={self._trainer_factory is not None}, "
-            f"dl_injected={self._dataset_loader is not None}, "
-            f"mlflow_injected={self._mlflow_manager is not None}"
+            f"dl_injected={self._dataset_loader is not None}"
         )
 
     # =========================================================================
@@ -300,42 +295,19 @@ class TrainingContainer:
 
         return self._lazy_memory_manager
 
-    def create_memory_manager_with_callbacks(
-        self,
-        mlflow_manager: IMLflowManager | None = None,
-    ) -> IMemoryManager:
+    def create_memory_manager_with_callbacks(self) -> IMemoryManager:
+        """Return the MemoryManager (no MLflow event callbacks).
+
+        Post wide-``IMLflowManager`` retirement, memory events are
+        captured exclusively through typed journal events emitted by
+        downstream callbacks (e.g. ``RunnerEventCallback``). This
+        method is preserved as a thin wrapper around :attr:`memory_manager`
+        for callers still expecting the old factory-style entrypoint.
+
+        :returns: the lazily-initialized memory manager.
+        :rtype: IMemoryManager
         """
-        Create MemoryManager with MLflow event callbacks.
-
-        This method creates a new MemoryManager instance with callbacks
-        that log memory events to MLflow.
-
-        Args:
-            mlflow_manager: MLflowManager for event logging
-
-        Returns:
-            IMemoryManager with callbacks configured
-        """
-        from ryotenkai_pod.trainer.memory_manager import MemoryEventCallbacks, MemoryManager
-
-        # If no MLflow manager, return regular memory manager
-        if mlflow_manager is None:
-            return self.memory_manager
-
-        # Create callbacks that delegate to MLflowManager
-        callbacks = MemoryEventCallbacks(
-            on_gpu_detected=lambda name, vram, tier: mlflow_manager.log_gpu_detection(name, vram, tier),
-            on_cache_cleared=lambda freed: mlflow_manager.log_cache_cleared(freed),
-            on_memory_warning=lambda util, used, total, is_crit: mlflow_manager.log_memory_warning(
-                util, used, total, is_critical=is_crit
-            ),
-            on_oom=lambda op, free: mlflow_manager.log_oom(op, free),
-            on_oom_retry=lambda op, attempt, max_att: mlflow_manager.log_oom_recovery(op, attempt, max_att),
-        )
-
-        mm = MemoryManager.auto_configure(callbacks=callbacks)
-        logger.debug("[CONTAINER:MM_CREATED] MemoryManager with MLflow callbacks")
-        return mm
+        return self.memory_manager
 
     # =========================================================================
     # STRATEGY FACTORY
@@ -443,26 +415,6 @@ class TrainingContainer:
         return loader
 
     # =========================================================================
-    # MLFLOW MANAGER
-    # =========================================================================
-
-    @property
-    def mlflow_manager(self) -> IMLflowManager | None:
-        """
-        Get MLflowManager instance.
-
-        Post-M7 cleanup: the legacy ``MLflowManager`` god-class is gone.
-        Pattern A (HF Trainer's MLflow callback adopts ``MLFLOW_RUN_ID``)
-        means the trainer no longer needs an in-process manager. This
-        property still honours an explicitly injected stub (tests) but
-        otherwise returns ``None``.
-
-        Returns:
-            IMLflowManager | None: injected stub or ``None``.
-        """
-        return self._mlflow_manager
-
-    # =========================================================================
     # COMPLETION NOTIFIER (REMOVED — Phase 6.3b)
     # =========================================================================
     # The marker-file notifier abstraction (and the protocol that wrapped it)
@@ -480,23 +432,15 @@ class TrainingContainer:
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizer,
-        mlflow_manager: IMLflowManager | None = None,
     ) -> StrategyOrchestrator:
-        """
-        Create StrategyOrchestrator with all dependencies injected.
+        """Create :class:`StrategyOrchestrator` with all dependencies injected.
 
-        Args:
-            model: Pre-trained model
-            tokenizer: Tokenizer for the model
-            mlflow_manager: Optional MLflowManager for experiment tracking
-
-        Returns:
-            StrategyOrchestrator: Configured orchestrator
+        :param model: pre-trained model.
+        :param tokenizer: tokenizer paired with ``model``.
+        :returns: configured orchestrator.
+        :rtype: StrategyOrchestrator
         """
         from ryotenkai_pod.trainer.orchestrator import StrategyOrchestrator
-
-        # Use provided mlflow_manager or get from container
-        mlflow = mlflow_manager or self.mlflow_manager
 
         orchestrator = StrategyOrchestrator(
             model=model,
@@ -506,10 +450,9 @@ class TrainingContainer:
             strategy_factory=self.strategy_factory,
             trainer_factory=self.trainer_factory,
             dataset_loader=self.dataset_loader,
-            mlflow_manager=mlflow,
         )
 
-        logger.debug(f"[CONTAINER:ORCHESTRATOR_CREATED] StrategyOrchestrator created (mlflow={mlflow is not None})")
+        logger.debug("[CONTAINER:ORCHESTRATOR_CREATED] StrategyOrchestrator created")
         return orchestrator
 
     # =========================================================================

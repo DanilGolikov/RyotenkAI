@@ -15,9 +15,9 @@ Resolution order
 2. Workspace lookup is the local copy written by the live run; it is
    always preferred because it doesn't require an MLflow round-trip.
 3. MLflow fallback: download the ``events/events.jsonl`` artifact via
-   :class:`~ryotenkai_shared.infrastructure.mlflow.protocol.IMLflowManager`
-   when the workspace copy is missing — runs finalized in a previous
-   process may only have the uploaded copy left on the server.
+   a ``MlflowClient`` constructed from ``tracking_uri`` when the workspace
+   copy is missing — runs finalized in a previous process may only have
+   the uploaded copy left on the server.
 4. Both missing → return :class:`ExperimentEventData` with empty
    fields and ``source="empty"``.
 
@@ -79,8 +79,6 @@ from ryotenkai_shared.utils.logger import get_logger
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
-
 
 logger = get_logger(__name__)
 
@@ -108,12 +106,12 @@ class JournalReportAdapter:
 
     def __init__(
         self,
-        mlflow_manager: IMLflowManager | None = None,
+        tracking_uri: str | None = None,
         *,
         artifact_dir: str = MLFLOW_EVENTS_ARTIFACT_DIR,
         journal_filename: str = JOURNAL_FILENAME,
     ) -> None:
-        self._mlflow = mlflow_manager
+        self._tracking_uri = tracking_uri
         self._artifact_dir = artifact_dir
         self._journal_filename = journal_filename
 
@@ -142,8 +140,8 @@ class JournalReportAdapter:
                 journal_path,
             )
 
-        # 2. MLflow fallback
-        if self._mlflow is not None:
+        # 2. MLflow fallback (only when a tracking URI is configured)
+        if self._tracking_uri:
             downloaded = self._download_from_mlflow(run_id)
             if downloaded is not None:
                 return self._read_from_journal(downloaded, run_id=run_id, source="mlflow")
@@ -187,8 +185,13 @@ class JournalReportAdapter:
         otherwise. All errors are swallowed by design — events.jsonl is
         best-effort.
         """
-        client = getattr(self._mlflow, "client", None)
-        if client is None:
+        if not self._tracking_uri:
+            return None
+
+        try:
+            from mlflow import MlflowClient  # noqa: PLC0415 -- local import
+            client = MlflowClient(tracking_uri=self._tracking_uri)
+        except Exception:  # noqa: BLE001 -- defensive
             return None
 
         artifact_path = f"{self._artifact_dir}/{self._journal_filename}"
