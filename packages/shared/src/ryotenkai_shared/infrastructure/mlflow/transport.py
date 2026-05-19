@@ -48,7 +48,12 @@ logger = get_logger(__name__)
 _T = TypeVar("_T")
 
 
-_DEFAULT_PING_PATH = "api/2.0/mlflow/experiments/list?max_results=1"
+# MLflow exposes a dedicated ``/health`` endpoint (returns 200 "OK") that
+# is independent of the versioned ``/api/2.0/mlflow/...`` surface. The
+# legacy ``experiments/list`` endpoint we used previously was removed in
+# MLflow 3.x in favour of ``experiments/search`` (POST), so pinning the
+# ping to that path is the only forward-compatible choice.
+_DEFAULT_PING_PATH = "health"
 """Endpoint used by :meth:`MlflowTransport.ping`. Chosen because it
 exists on every MLflow >=2.x server, requires auth (so we exercise the
 auth header path), and is cheap (returns at most 1 row)."""

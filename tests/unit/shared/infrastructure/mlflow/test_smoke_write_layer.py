@@ -308,6 +308,21 @@ def test_ensure_experiment_returns_active_unchanged(stub_mlflow: MagicMock) -> N
     client.create_experiment.assert_not_called()
 
 
+def test_ping_path_targets_health_endpoint() -> None:
+    """The ping must hit ``/health``, not the legacy ``experiments/list``.
+
+    MLflow 3.x removed the ``GET /api/2.0/mlflow/experiments/list``
+    endpoint (replaced by ``POST .../experiments/search``). The
+    dedicated ``/health`` endpoint is version-independent and is the
+    only correct target for a transport-level reachability probe.
+    """
+    from ryotenkai_shared.infrastructure.mlflow.transport import (
+        _DEFAULT_PING_PATH,
+    )
+
+    assert _DEFAULT_PING_PATH == "health"
+
+
 def test_ensure_experiment_creates_on_miss(stub_mlflow: MagicMock) -> None:
     """When the name is unknown, the experiment is created fresh."""
     from ryotenkai_shared.infrastructure.mlflow.auth import _AuthNone
